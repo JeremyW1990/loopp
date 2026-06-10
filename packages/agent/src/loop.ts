@@ -26,6 +26,7 @@
 import { agentRuns, conversations, messages, type Db } from "@loopp/db";
 import { newId } from "@loopp/shared";
 import { asc, eq } from "drizzle-orm";
+import type { RunEvent, RunEventBus } from "./events";
 import type { MockPaymentGateway } from "./gateway";
 import {
   LlmCallError,
@@ -57,6 +58,13 @@ export interface AgentDeps {
   now?: () => Date;
   /** Injectable backoff — tests record calls instead of waiting. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Optional live run-event bus. When present, the loop emits a RunEvent for
+   * every lifecycle boundary it crosses — run_started, the per-step events the
+   * tracer derives (see trace.ts), and run_finished — keyed by runId. Omitted
+   * by keyless tests and harnesses; the run behaves identically without it.
+   */
+  events?: RunEventBus;
 }
 
 export interface AgentTurnResult {
@@ -172,7 +180,17 @@ export async function runAgentTurn(
     startedAt: now(),
   });
 
-  const tracer = createRunTracer(deps.db, runId);
+  // Bind the optional bus to this run's channel. The tracer derives the
+  // per-step events (started/finished/guardrail) from its single write path so
+  // deep guardrail rows surface; the loop emits only the run brackets here.
+  const emit = deps.events
+    ? (event: RunEvent) => deps.events!.emit(runId, event)
+    : undefined;
+  // run_started carries seq 0 — emitted before the tracer assigns any per-step
+  // seq, matching exactly what replayRunEvents prepends for a finished run.
+  emit?.({ type: "run_started", runId, seq: 0 });
+
+  const tracer = createRunTracer(deps.db, runId, emit);
   const toolCtx: ToolContext = {
     db: deps.db,
     conversationId,
@@ -299,6 +317,16 @@ export async function runAgentTurn(
       costUsd: computeCostUsd(deps.model, totalInputTokens, totalOutputTokens),
       durationMs: Math.round(performance.now() - startedClock),
       finishedAt: now(),
+    });
+    // run_finished closes the live stream on BOTH completion and failure. seq
+    // mirrors the final step's seq (the tracer's last value) so it matches the
+    // bracket replayRunEvents appends for the same finished run.
+    emit?.({
+      type: "run_finished",
+      runId,
+      seq: tracer.currentSeq(),
+      status,
+      ...(failure !== undefined ? { error: failure } : {}),
     });
   }
 }

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { httpBatchLink } from "@trpc/client";
+import { httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
@@ -12,7 +12,16 @@ function Root() {
   const [queryClient] = useState(() => new QueryClient());
   const [trpcClient] = useState(() =>
     trpc.createClient({
-      links: [httpBatchLink({ url: "/trpc", transformer: superjson })],
+      links: [
+        splitLink({
+          // SSE subscriptions (chat.runEvents) flow over httpSubscriptionLink;
+          // queries/mutations stay on the batch link. The transformer lives on
+          // each link in tRPC v11 (not on the client root).
+          condition: (op) => op.type === "subscription",
+          true: httpSubscriptionLink({ url: "/trpc", transformer: superjson }),
+          false: httpBatchLink({ url: "/trpc", transformer: superjson }),
+        }),
+      ],
     }),
   );
 

@@ -1,4 +1,5 @@
 import { Link, Route, Routes, useLocation } from "react-router-dom";
+import ChatPage from "./pages/ChatPage";
 import { trpc } from "./trpc";
 
 function StatsCard() {
@@ -31,18 +32,6 @@ function StatsCard() {
         <strong className="text-slate-900">{stats.data.refunds}</strong>{" "}
         refunds
       </span>
-    </div>
-  );
-}
-
-function ChatPage() {
-  return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold text-slate-900">Customer chat</h1>
-      <p className="text-slate-500">
-        The refund agent chat lands here in milestone 4.
-      </p>
-      <StatsCard />
     </div>
   );
 }

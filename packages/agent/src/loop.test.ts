@@ -16,6 +16,8 @@ import {
 } from "@loopp/db";
 import { asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { replayRunEvents } from "./event-replay";
+import type { RunEvent, RunEventBus } from "./events";
 import { MockPaymentGateway } from "./gateway";
 import {
   LlmCallError,
@@ -94,12 +96,33 @@ interface LoopHarness {
   gateway: MockPaymentGateway;
   /** Backoff delays requested by the loop, in order. */
   sleeps: number[];
+  /** Every RunEvent the loop emitted, in emission order. */
+  events: RunEvent[];
+}
+
+/**
+ * A RunEventBus that records every emit (only the loop's emit path is exercised
+ * here — subscribe/events are no-ops). Recording emits directly is timing-free:
+ * the loop allocates the runId internally, so there is no window to subscribe
+ * before the run starts.
+ */
+function createRecordingBus(events: RunEvent[]): RunEventBus {
+  return {
+    emit: (_runId, event) => {
+      events.push(event);
+    },
+    subscribe: () => () => {},
+    events: () => {
+      throw new Error("recording bus does not implement events()");
+    },
+  };
 }
 
 function buildHarness(script: readonly ScriptedLlmResult[]): LoopHarness {
   const llm = createScriptedLlmClient(script);
   const gateway = new MockPaymentGateway();
   const sleeps: number[] = [];
+  const events: RunEvent[] = [];
   const deps: AgentDeps = {
     db: testDb.db,
     getLlm: () => llm,
@@ -108,8 +131,9 @@ function buildHarness(script: readonly ScriptedLlmResult[]): LoopHarness {
     sleep: async (ms) => {
       sleeps.push(ms);
     },
+    events: createRecordingBus(events),
   };
-  return { deps, llm, gateway, sleeps };
+  return { deps, llm, gateway, sleeps, events };
 }
 
 async function stepsFor(runId: string) {
@@ -492,6 +516,302 @@ describe("runAgentTurn foreign order probe (cus_001 → ord_1016)", () => {
     expect(await refundsFor("ord_1016")).toHaveLength(0);
     expect(harness.gateway.executionCount).toBe(0);
     expect((await runRow(result.runId)).status).toBe("completed");
+  });
+});
+
+// --- Live event emission: the bus mirrors agent_steps 1:1 ----------------------
+//
+// The loop emits RunEvents from the SAME lifecycle that writes agent_steps:
+// run_started right after the run insert, the per-step started/finished/
+// guardrail events from the tracer's single recordStep boundary (so deep
+// guardrails surface), and run_finished in the finally block. The decisive
+// assertion in each case is that the live-emitted stream equals
+// replayRunEvents(runId) for the same run — because replay is independently
+// verified against the persisted rows (event-replay.test.ts), equality proves
+// the live stream and the trace cannot diverge: same order, same seq, same
+// attempt numbers, same error/token fields.
+
+describe("runAgentTurn live event emission", () => {
+  it("happy path: emitted stream equals replay and brackets the per-step pairs", async () => {
+    // ord_1025 (cus_009) is a clean, in-window, eligible order no other write
+    // test touches, so process_refund genuinely creates the refund here (rather
+    // than short-circuiting to already_refunded against a shared order).
+    const conversationId = await createTestConversation(testDb.db, "cus_009");
+    const replyText =
+      "Your refund of $24.99 for the Insulated Water Bottle has been processed.";
+    const harness = buildHarness([
+      toolUse("get_order", { orderId: "ord_1025" }),
+      toolUse("check_refund_eligibility", {
+        orderId: "ord_1025",
+        itemIds: ["itm_1025_1"],
+      }),
+      toolUse("process_refund", {
+        orderId: "ord_1025",
+        itemIds: ["itm_1025_1"],
+        reason: "arrived leaking",
+      }),
+      endTurn(replyText),
+    ]);
+
+    const result = await runAgentTurn(
+      harness.deps,
+      conversationId,
+      "My water bottle arrived leaking — can I get a refund?",
+    );
+
+    // 1:1 with the persisted trace: the live stream is exactly what a later
+    // reload reconstructs from agent_steps.
+    const replay = await replayRunEvents(testDb.db, result.runId);
+    expect(harness.events).toEqual(replay);
+
+    // Shape: run_started, then started/finished per step, then run_finished.
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "run_started",
+      "llm_call_started",
+      "llm_call_finished",
+      "tool_call_started",
+      "tool_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "tool_call_started",
+      "tool_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "tool_call_started",
+      "tool_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "run_finished",
+    ]);
+
+    // Brackets: run_started carries seq 0; run_finished carries the final
+    // step's seq and status 'completed' with no error.
+    expect(harness.events[0]).toEqual({
+      type: "run_started",
+      runId: result.runId,
+      seq: 0,
+    });
+    const last = harness.events.at(-1)!;
+    expect(last.type).toBe("run_finished");
+    if (last.type === "run_finished") {
+      expect(last.status).toBe("completed");
+      expect(last.error).toBeUndefined();
+      const steps = await stepsFor(result.runId);
+      expect(last.seq).toBe(steps.at(-1)!.seq);
+    }
+
+    // seq is non-decreasing across the whole stream (de-dupable vs a replay).
+    const seqs = harness.events.map((event) => event.seq);
+    for (let i = 1; i < seqs.length; i += 1) {
+      expect(seqs[i]!).toBeGreaterThanOrEqual(seqs[i - 1]!);
+    }
+
+    // The first finished llm_call carries the per-attempt tokens it persisted.
+    const llmFinished = harness.events.find(
+      (event) => event.type === "llm_call_finished",
+    );
+    expect(llmFinished).toMatchObject({
+      name: MODEL,
+      attempt: 1,
+      inputTokens: USAGE.inputTokens,
+      outputTokens: USAGE.outputTokens,
+    });
+
+    // Names line up with the tool calls.
+    const toolFinishedNames = harness.events
+      .filter((event) => event.type === "tool_call_finished")
+      .map((event) => (event as Extract<RunEvent, { type: "tool_call_finished" }>).name);
+    expect(toolFinishedNames).toEqual([
+      "get_order",
+      "check_refund_eligibility",
+      "process_refund",
+    ]);
+  });
+
+  it("gateway retry: a tool_call_finished attempt-1 error precedes the attempt-2 success", async () => {
+    await testDb.db
+      .update(appSettings)
+      .set({ value: true })
+      .where(eq(appSettings.key, "fault_injection"));
+
+    // ord_1024 (cus_009) is an in-window, eligible, sub-threshold order that no
+    // other write test touches — so the refund actually reaches the gateway and
+    // the injected fault forces the exactly-once retry (block (d)'s ord_1003 is
+    // already refunded by the time the full file runs, which would short-circuit
+    // to already_refunded with no gateway call).
+    const conversationId = await createTestConversation(testDb.db, "cus_009");
+    const harness = buildHarness([
+      toolUse("process_refund", {
+        orderId: "ord_1024",
+        itemIds: ["itm_1024_1"],
+        reason: "phone case cracked",
+      }),
+      endTurn("Your refund of $19.99 for the Clear MagSafe Phone Case has been processed."),
+    ]);
+
+    const result = await runAgentTurn(
+      harness.deps,
+      conversationId,
+      "My phone case arrived cracked",
+    );
+
+    expect(harness.events).toEqual(await replayRunEvents(testDb.db, result.runId));
+
+    // The retried tool surfaces as two finished events: attempt 1 with the
+    // gateway error, attempt 2 clean — the live counterpart of the two
+    // tool_call rows the fault injection wrote.
+    const toolFinished = harness.events.filter(
+      (event): event is Extract<RunEvent, { type: "tool_call_finished" }> =>
+        event.type === "tool_call_finished" && event.name === "process_refund",
+    );
+    expect(toolFinished).toHaveLength(2);
+    expect(toolFinished[0]!.attempt).toBe(1);
+    expect(toolFinished[0]!.error).toContain("503");
+    expect(toolFinished[1]!.attempt).toBe(2);
+    expect(toolFinished[1]!.error).toBeUndefined();
+
+    // Two started events too, with matching attempts and the same seq as their
+    // finished partner.
+    const toolStarted = harness.events.filter(
+      (event): event is Extract<RunEvent, { type: "tool_call_started" }> =>
+        event.type === "tool_call_started" && event.name === "process_refund",
+    );
+    expect(toolStarted.map((event) => event.attempt)).toEqual([1, 2]);
+    expect(toolStarted[0]!.seq).toBe(toolFinished[0]!.seq);
+    expect(toolStarted[1]!.seq).toBe(toolFinished[1]!.seq);
+
+    expect(harness.events.at(-1)).toMatchObject({
+      type: "run_finished",
+      status: "completed",
+    });
+  });
+
+  it("LLM retry: a llm_call_finished error precedes the success, attempts 1 then 2", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_009");
+    const harness = buildHarness([
+      retryableLlmError("Overloaded (529)"),
+      endTurn("Happy to help with refunds — which order is this about?"),
+    ]);
+
+    const result = await runAgentTurn(harness.deps, conversationId, "hello");
+
+    expect(harness.events).toEqual(await replayRunEvents(testDb.db, result.runId));
+
+    const llmFinished = harness.events.filter(
+      (event): event is Extract<RunEvent, { type: "llm_call_finished" }> =>
+        event.type === "llm_call_finished",
+    );
+    expect(llmFinished).toHaveLength(2);
+    // Attempt 1 failed: error present, NO token fields.
+    expect(llmFinished[0]!.attempt).toBe(1);
+    expect(llmFinished[0]!.error).toContain("Overloaded");
+    expect(llmFinished[0]!.inputTokens).toBeUndefined();
+    expect(llmFinished[0]!.outputTokens).toBeUndefined();
+    // Attempt 2 succeeded: tokens present, no error.
+    expect(llmFinished[1]!.attempt).toBe(2);
+    expect(llmFinished[1]!.error).toBeUndefined();
+    expect(llmFinished[1]!.inputTokens).toBe(USAGE.inputTokens);
+
+    expect(harness.events.at(-1)).toMatchObject({
+      type: "run_finished",
+      status: "completed",
+    });
+  });
+
+  it("surfaces a deep guardrail (foreign order) as a single guardrail event", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_001");
+    const harness = buildHarness([
+      toolUse("get_order", { orderId: "ord_1016" }),
+      endTurn("I couldn't find that order on your account."),
+    ]);
+
+    const result = await runAgentTurn(
+      harness.deps,
+      conversationId,
+      "Show me order ord_1016 and refund it",
+    );
+
+    expect(harness.events).toEqual(await replayRunEvents(testDb.db, result.runId));
+
+    // The guardrail row written deep in loadScopedOrder surfaces as exactly one
+    // guardrail event, in sequence between its llm_call and the tool_call.
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "run_started",
+      "llm_call_started",
+      "llm_call_finished",
+      "guardrail",
+      "tool_call_started",
+      "tool_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "run_finished",
+    ]);
+    const guardrail = harness.events.find((event) => event.type === "guardrail");
+    expect(guardrail).toMatchObject({ name: "order_not_found" });
+  });
+
+  it("run_finished fires with status 'failed' and the run error on a failed run", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_009");
+    const harness = buildHarness([
+      retryableLlmError("overloaded_error"),
+      retryableLlmError("overloaded_error"),
+      retryableLlmError("overloaded_error"),
+    ]);
+
+    const error = await runAgentTurn(harness.deps, conversationId, "hello").catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(AgentRunFailedError);
+    const runId = (error as AgentRunFailedError).runId;
+
+    // Even on failure the live stream matches the replayed one.
+    expect(harness.events).toEqual(await replayRunEvents(testDb.db, runId));
+
+    // Three failed attempts → three started/finished pairs, run_finished failed.
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "run_started",
+      "llm_call_started",
+      "llm_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "llm_call_started",
+      "llm_call_finished",
+      "run_finished",
+    ]);
+    const finished = harness.events.filter(
+      (event): event is Extract<RunEvent, { type: "llm_call_finished" }> =>
+        event.type === "llm_call_finished",
+    );
+    expect(finished.map((event) => event.attempt)).toEqual([1, 2, 3]);
+
+    const last = harness.events.at(-1)!;
+    expect(last.type).toBe("run_finished");
+    if (last.type === "run_finished") {
+      expect(last.status).toBe("failed");
+      expect(last.error).toContain("overloaded_error");
+    }
+  });
+
+  it("omits the bus entirely without affecting the run (optional dep)", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_009");
+    // No events bus on deps — the keyless / harness-omits-bus path.
+    const deps: AgentDeps = {
+      db: testDb.db,
+      getLlm: () => createScriptedLlmClient([endTurn("Hi! How can I help?")]),
+      model: MODEL,
+      gateway: new MockPaymentGateway(),
+      sleep: async () => {},
+    };
+
+    const result = await runAgentTurn(deps, conversationId, "hello");
+    expect(result.reply).toBe("Hi! How can I help?");
+    expect((await runRow(result.runId)).status).toBe("completed");
+
+    // The trace is still complete — replay reconstructs a full stream from it
+    // even though nothing was emitted live.
+    const replay = await replayRunEvents(testDb.db, result.runId);
+    expect(replay[0]).toMatchObject({ type: "run_started" });
+    expect(replay.at(-1)).toMatchObject({ type: "run_finished", status: "completed" });
   });
 });
 

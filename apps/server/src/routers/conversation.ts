@@ -1,4 +1,10 @@
-import { conversations, customers, messages } from "@loopp/db";
+import {
+  conversations,
+  customers,
+  messages,
+  orderItems,
+  orders,
+} from "@loopp/db";
 import { newId } from "@loopp/shared";
 import { TRPCError } from "@trpc/server";
 import { asc, eq } from "drizzle-orm";
@@ -61,5 +67,73 @@ export const conversationRouter = router({
         .from(messages)
         .where(eq(messages.conversationId, input.conversationId))
         .orderBy(asc(messages.createdAt), asc(messages.id));
+    }),
+
+  /**
+   * The orders + items belonging to the conversation's customer — the chat
+   * sidebar's source. Identity is SESSION-SCOPED: customerId is read from the
+   * conversation row, never from input, so this query can only ever surface the
+   * bound customer's data. Unknown conversation → NOT_FOUND. A customer with no
+   * orders (cus_010) returns an empty array. Money stays integer cents; the UI
+   * formats with formatCents.
+   */
+  orders: publicProcedure
+    .input(z.object({ conversationId: z.string().min(1).max(64) }).strict())
+    .query(async ({ ctx, input }) => {
+      const conversationRows = await ctx.db
+        .select({ customerId: conversations.customerId })
+        .from(conversations)
+        .where(eq(conversations.id, input.conversationId))
+        .limit(1);
+      const conversation = conversationRows[0];
+      if (conversation === undefined) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Conversation "${input.conversationId}" not found`,
+        });
+      }
+
+      const orderRows = await ctx.db
+        .select({
+          id: orders.id,
+          status: orders.status,
+          orderedAt: orders.orderedAt,
+          deliveredAt: orders.deliveredAt,
+          shippingCents: orders.shippingCents,
+          totalCents: orders.totalCents,
+        })
+        .from(orders)
+        .where(eq(orders.customerId, conversation.customerId))
+        .orderBy(asc(orders.orderedAt), asc(orders.id));
+
+      if (orderRows.length === 0) return [];
+
+      // One parameterized fetch of all items for this customer's orders, then
+      // group in memory — avoids an N+1 over orders.
+      const itemRows = await ctx.db
+        .select({
+          id: orderItems.id,
+          orderId: orderItems.orderId,
+          name: orderItems.name,
+          unitPriceCents: orderItems.unitPriceCents,
+          quantity: orderItems.quantity,
+          isFinalSale: orderItems.isFinalSale,
+        })
+        .from(orderItems)
+        .innerJoin(orders, eq(orderItems.orderId, orders.id))
+        .where(eq(orders.customerId, conversation.customerId))
+        .orderBy(asc(orderItems.id));
+
+      const itemsByOrder = new Map<string, Omit<(typeof itemRows)[number], "orderId">[]>();
+      for (const { orderId, ...item } of itemRows) {
+        const bucket = itemsByOrder.get(orderId);
+        if (bucket === undefined) itemsByOrder.set(orderId, [item]);
+        else bucket.push(item);
+      }
+
+      return orderRows.map((order) => ({
+        ...order,
+        items: itemsByOrder.get(order.id) ?? [],
+      }));
     }),
 });
