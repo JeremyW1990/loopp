@@ -8,6 +8,7 @@
   },
   "scripts": {
     "push": "drizzle-kit push",
+    "preflight": "tsx scripts/preflight.ts",
     "seed": "tsx src/seed-cli.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -13,7 +13,8 @@
     "db:down": "docker compose down",
     "db:push": "pnpm --filter @loopp/db push",
     "db:seed": "pnpm --filter @loopp/db seed",
-    "setup": "pnpm db:up && pnpm db:push && pnpm db:seed",
+    "setup": "pnpm --filter @loopp/db preflight && pnpm db:up && pnpm db:push && pnpm db:seed",
+    "red-team": "pnpm --filter @loopp/agent red-team",
     "typecheck": "pnpm -r typecheck"
   }
 }

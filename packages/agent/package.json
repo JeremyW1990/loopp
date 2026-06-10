@@ -8,6 +8,7 @@
   },
   "scripts": {
     "policy:render": "tsx scripts/render-policy.ts",
+    "red-team": "tsx scripts/red-team-live.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "dotenv": "^16.4.7",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.8"
