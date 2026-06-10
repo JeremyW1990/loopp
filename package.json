@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
     "dev": "pnpm -r --parallel --stream dev",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
