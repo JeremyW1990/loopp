@@ -25,7 +25,8 @@
 // them independent within this file.
 // ---------------------------------------------------------------------------
 
-import { appSettings, refunds, runSeed } from "@loopp/db";
+import { appSettings, messages, refunds, runSeed } from "@loopp/db";
+import { newId } from "@loopp/shared";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -33,6 +34,8 @@ import {
   RefundNotFoundError,
   approveEscalatedRefund,
   getRunTrace,
+  getTranscript,
+  listChatHistory,
   rejectEscalatedRefund,
   type AdminDeps,
 } from "./admin";
@@ -486,3 +489,89 @@ function toolUse(name: string, input: unknown): LlmResponse {
     usage: USAGE,
   };
 }
+
+// --- Chat history: grouped by customer (user) → session ----------------------
+
+/** Insert a conversation for a customer with an ordered user→assistant pair. */
+async function seedSession(
+  customerId: string,
+  userText: string,
+  assistantText: string,
+  base: number,
+): Promise<string> {
+  const conversationId = await createTestConversation(testDb.db, customerId);
+  await testDb.db.insert(messages).values([
+    {
+      id: newId("msg"),
+      conversationId,
+      role: "user",
+      content: userText,
+      createdAt: new Date(base),
+    },
+    {
+      id: newId("msg"),
+      conversationId,
+      role: "assistant",
+      content: assistantText,
+      createdAt: new Date(base + 1000),
+    },
+  ]);
+  return conversationId;
+}
+
+describe("listChatHistory — grouping by customer then session", () => {
+  it("groups a customer's sessions, counts messages, and previews the opener", async () => {
+    // Two sessions for cus_011, one for cus_012 (customers no other test touches).
+    const a1 = await seedSession("cus_011", "Refund my espresso machine", "Sure — checking…", 1_000_000);
+    const a2 = await seedSession("cus_011", "Actually the grinder too", "Let me look…", 2_000_000);
+    const b1 = await seedSession("cus_012", "Where is my jacket refund?", "Looking into it…", 1_500_000);
+
+    const history = await listChatHistory(testDb.db);
+
+    const c11 = history.find((c) => c.customerId === "cus_011");
+    const c12 = history.find((c) => c.customerId === "cus_012");
+    expect(c11).toBeDefined();
+    expect(c12).toBeDefined();
+
+    // cus_011 owns exactly the two sessions we created, each with 2 messages.
+    const ids11 = c11!.sessions.map((s) => s.conversationId);
+    expect(ids11).toContain(a1);
+    expect(ids11).toContain(a2);
+    expect(c11!.sessionCount).toBe(c11!.sessions.length);
+    for (const s of c11!.sessions) expect(s.messageCount).toBe(2);
+
+    // Preview is the opening USER message of each session, not the assistant's.
+    const s_a1 = c11!.sessions.find((s) => s.conversationId === a1);
+    expect(s_a1!.preview).toBe("Refund my espresso machine");
+
+    // cus_012's single session is grouped separately.
+    expect(c12!.sessions.map((s) => s.conversationId)).toContain(b1);
+
+    // Grouped, not flat: each customer appears once.
+    expect(history.filter((c) => c.customerId === "cus_011")).toHaveLength(1);
+  });
+});
+
+describe("getTranscript — full session transcript in time order", () => {
+  it("returns messages chronologically (user before assistant)", async () => {
+    const conv = await seedSession(
+      "cus_013",
+      "Hi, refund please",
+      "Happy to help!",
+      3_000_000,
+    );
+    const transcript = await getTranscript(testDb.db, conv);
+    expect(transcript).not.toBeNull();
+    expect(transcript!.customerId).toBe("cus_013");
+    expect(transcript!.messages.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(transcript!.messages[0]!.content).toBe("Hi, refund please");
+    expect(transcript!.messages[1]!.content).toBe("Happy to help!");
+  });
+
+  it("returns null for an unknown conversation id (router maps to NOT_FOUND)", async () => {
+    expect(await getTranscript(testDb.db, "conv_does_not_exist")).toBeNull();
+  });
+});

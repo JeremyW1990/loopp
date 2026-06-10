@@ -2,6 +2,8 @@ import {
   approveEscalatedRefund,
   getAdminStats,
   getRunTrace,
+  getTranscript,
+  listChatHistory,
   listEscalations,
   listRuns,
   readFaultInjection,
@@ -68,6 +70,29 @@ export const adminRouter = router({
         });
       }
       return trace;
+    }),
+
+  /**
+   * Chat history grouped by customer (user) → conversation (session), each with
+   * message counts + an opening-message preview. Newest session first.
+   */
+  chatHistory: publicProcedure.query(({ ctx }) => listChatHistory(ctx.db)),
+
+  /**
+   * One session's full transcript (user + assistant messages in time order).
+   * Unknown conversationId yields null from the logic layer → NOT_FOUND here.
+   */
+  transcript: publicProcedure
+    .input(z.object({ conversationId: z.string().min(1).max(64) }).strict())
+    .query(async ({ ctx, input }) => {
+      const transcript = await getTranscript(ctx.db, input.conversationId);
+      if (transcript === null) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Conversation "${input.conversationId}" not found`,
+        });
+      }
+      return transcript;
     }),
 
   /** The refunds awaiting human review (status='escalated'), newest first. */
