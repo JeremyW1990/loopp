@@ -1,4 +1,4 @@
-// Preflight for `pnpm setup` (tsx scripts/preflight.ts). Runs BEFORE
+// Preflight for `pnpm bootstrap` (tsx scripts/preflight.ts). Runs BEFORE
 // `docker compose up`, so it touches no database and loads no dotenv — it
 // only checks the host environment and prints an actionable checklist.
 //
@@ -82,7 +82,7 @@ async function main() {
   } else {
     console.error("  [fail] Docker daemon is NOT reachable");
     console.error(
-      "         Start Docker Desktop (or `colima start`) and re-run `pnpm setup`.\n" +
+      "         Start Docker Desktop (or `colima start`) and re-run `pnpm bootstrap`.\n" +
         "         Postgres runs in Docker Compose, so this is required.",
     );
     process.exit(1);

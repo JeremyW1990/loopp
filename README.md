@@ -17,7 +17,7 @@ Prerequisites: **Docker** (running), **Node ≥ 20**, and **pnpm 9** (`corepack 
 cp .env.example .env          # then open .env and paste your ANTHROPIC_API_KEY
 
 # 2. Set up — preflights Docker + ports, starts Postgres, pushes schema, seeds data
-pnpm install && pnpm setup
+pnpm install && pnpm bootstrap
 
 # 3. Run — API + web dev servers, in parallel
 pnpm dev
@@ -40,7 +40,7 @@ Then open:
 4. Try the **escalation** prompt (a >$500 cart) → it escalates to a human instead of paying.
 5. Open **/admin → Conversations** → click that run to see the full trace: each LLM call and tool call, collapsible I/O JSON, tokens, latency. Flip the **chaos toggle** on and run another refund to watch a gateway retry (attempt 1 fails, attempt 2 succeeds) appear as a retry badge in the trace.
 
-> **No API key yet?** The app still boots and is fully usable — only the chat shows a friendly banner naming the exact fix. `pnpm setup`, `pnpm test`, and the admin dashboard never need a key.
+> **No API key yet?** The app still boots and is fully usable — only the chat shows a friendly banner naming the exact fix. `pnpm bootstrap`, `pnpm test`, and the admin dashboard never need a key.
 
 The customer-facing refund policy is generated from the rule data and lives at **[docs/refund-policy.md](docs/refund-policy.md)** (also viewable in the UI). It is the single source of truth — the same `POLICY_RULES` data renders that document *and* drives the eligibility engine, so the doc can never drift from enforcement.
 
@@ -48,7 +48,7 @@ The customer-facing refund policy is generated from the rule data and lives at *
 
 ## Busy-machine overrides (port / DB already in use)
 
-The defaults are chosen to dodge common collisions — this project's own dev machine needed **5436 / 4011 / 5173** precisely because **5432, 5433, 5435, and 3001** were already taken by other local Postgres instances and dev servers. If a default still collides on your machine, `pnpm setup` prints a warning naming the exact override, and every port is environment-driven (no code edits):
+The defaults are chosen to dodge common collisions — this project's own dev machine needed **5436 / 4011 / 5173** precisely because **5432, 5433, 5435, and 3001** were already taken by other local Postgres instances and dev servers. If a default still collides on your machine, `pnpm bootstrap` prints a warning naming the exact override, and every port is environment-driven (no code edits):
 
 | Env var | Default | What it controls |
 | --- | --- | --- |
@@ -58,7 +58,7 @@ The defaults are chosen to dodge common collisions — this project's own dev ma
 | `VITE_API_PROXY` | `http://localhost:4011` | Where the web dev server proxies `/trpc`. Set this if you changed `PORT`. |
 | `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | The model the agent loop uses. |
 
-Set them in `.env` before `pnpm setup` / `pnpm dev`. The host-side Postgres port is mapped in `docker-compose.yml` (`5436:5432`); to use a different host port, change that mapping and point `DATABASE_URL` at it. `pnpm setup` runs a **preflight** first: it hard-fails (with an actionable message) if the Docker daemon is unreachable — it can't start Postgres without it — and warns (non-fatally) if any of 5436 / 4011 / 5173 is already in use, naming the override to set or how to free the port. A re-run with the stack already up is legitimate and stays green.
+Set them in `.env` before `pnpm bootstrap` / `pnpm dev`. The host-side Postgres port is mapped in `docker-compose.yml` (`5436:5432`); to use a different host port, change that mapping and point `DATABASE_URL` at it. `pnpm bootstrap` runs a **preflight** first: it hard-fails (with an actionable message) if the Docker daemon is unreachable — it can't start Postgres without it — and warns (non-fatally) if any of 5436 / 4011 / 5173 is already in use, naming the override to set or how to free the port. A re-run with the stack already up is legitimate and stays green.
 
 ---
 
@@ -232,7 +232,7 @@ This project was built with heavy use of Claude (Anthropic's CLI agent) under a 
 
 | Command | What it does |
 | --- | --- |
-| `pnpm setup` | Preflight (Docker + ports) → start Postgres → push schema → seed. |
+| `pnpm bootstrap` | Preflight (Docker + ports) → start Postgres → push schema → seed. |
 | `pnpm dev` | Run the API and web dev servers in parallel. |
 | `pnpm test` | Full offline test suite (no API key needed). The validation gate + CI. |
 | `pnpm typecheck` | Typecheck every workspace package. |
