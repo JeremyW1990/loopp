@@ -280,7 +280,7 @@ function eligibleItemIds(result: EligibilityResult): string[] {
 }
 
 /** Fresh read per call — no caching, so the admin chaos toggle works live. */
-async function readFaultInjection(db: Db): Promise<boolean> {
+export async function readFaultInjection(db: Db): Promise<boolean> {
   const rows = await db
     .select()
     .from(appSettings)

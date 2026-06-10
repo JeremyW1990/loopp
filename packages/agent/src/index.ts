@@ -10,3 +10,4 @@ export * from "./events";
 export * from "./event-replay";
 export * from "./tools";
 export * from "./loop";
+export * from "./admin";
