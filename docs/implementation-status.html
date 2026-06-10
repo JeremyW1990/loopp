@@ -51,11 +51,11 @@
 <script id="status-data" type="application/json">
 {
   "updated": "2026-06-09",
-  "currentCycle": { "task": "T3", "branch": "task/t3", "phase": "design", "startedAt": "2026-06-09", "note": "auto-merge mode — agent core: tool loop, mock gateway, trace persistence" },
+  "currentCycle": { "task": "T4", "branch": "task/t4", "phase": "design", "startedAt": "2026-06-10", "note": "auto-merge mode — customer chat UI + live agent activity (SSE)" },
   "tasks": {
     "T1": { "status": "done", "pr": null, "mergedAt": "2026-06-09", "note": "pre-loop: committed directly to main (15fd610)" },
     "T2": { "status": "done", "pr": 1, "mergedAt": "2026-06-09", "note": "57 tests, 0 fix rounds; human-reviewed (dryRun), auto-merge enabled from T3" },
-    "T3": { "status": "in_progress" },
+    "T3": { "status": "done", "pr": 2, "mergedAt": "2026-06-10", "note": "156 tests; verify fleet hit session limit → recovered via independent clean-room review (8/8 invariants, 10/10 tests mutation-confirmed) + green CI" },
     "T4": { "status": "todo" },
     "T5": { "status": "todo" },
     "T6": { "status": "todo" },
@@ -67,7 +67,9 @@
     { "at": "2026-06-09", "task": "T2", "event": "cycle started on task/t2 (dryRun)" },
     { "at": "2026-06-09", "task": null, "event": "plan: rubric map §0.5 + canonical flows §0.6 + resilience/architecture rules added (Jeremy's evaluation-criteria + interview-prep passes)" },
     { "at": "2026-06-09", "task": "T2", "event": "engine verified (57 tests, 0 fix rounds) — PR #1 open for dryRun review" },
-    { "at": "2026-06-09", "task": "T2", "event": "merged in #1 after human review + green CI — loop switches to auto-merge for T3..T7" }
+    { "at": "2026-06-09", "task": "T2", "event": "merged in #1 after human review + green CI — loop switches to auto-merge for T3..T7" },
+    { "at": "2026-06-10", "task": "T3", "event": "engine code green (156 tests) but verify fleet hit Claude session limit; recovered with 2 independent clean-room verifiers (security 8/8, test-integrity 10/10 mutation-confirmed)" },
+    { "at": "2026-06-10", "task": "T3", "event": "merged in #2 after green CI — agent core complete" }
   ]
 }
 </script>
