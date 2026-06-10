@@ -36,10 +36,17 @@ type RunSummary = RouterOutputs["admin"]["runs"][number];
 type RunTrace = RouterOutputs["admin"]["trace"];
 type TraceStep = RunTrace["steps"][number];
 type Escalation = RouterOutputs["admin"]["escalations"][number];
+type CustomerChatHistory = RouterOutputs["admin"]["chatHistory"][number];
+type ChatTranscript = RouterOutputs["admin"]["transcript"];
+type TranscriptMessage = ChatTranscript["messages"][number];
 
 export default function AdminPage() {
   // The run whose trace is shown on the right. null until a row is clicked.
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // The chat session whose transcript is shown. null until a session is clicked.
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(null);
 
   return (
     <div className="space-y-6">
@@ -48,12 +55,26 @@ export default function AdminPage() {
           Admin dashboard
         </h1>
         <p className="text-sm text-slate-500">
-          Run traces, the escalation queue, and the fault-injection control.
+          Chat history, run traces, the escalation queue, and the
+          fault-injection control.
         </p>
       </div>
 
       <StatsBar />
       <ChaosToggle />
+
+      <div>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Chat history · by customer &amp; session
+        </h2>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <ChatHistoryList
+            selectedConversationId={selectedConversationId}
+            onSelect={setSelectedConversationId}
+          />
+          <TranscriptViewer conversationId={selectedConversationId} />
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <RunsList
@@ -64,6 +85,167 @@ export default function AdminPage() {
       </div>
 
       <EscalationQueue />
+    </div>
+  );
+}
+
+// --- Chat history (grouped by customer → session) ----------------------------
+
+function ChatHistoryList({
+  selectedConversationId,
+  onSelect,
+}: {
+  selectedConversationId: string | null;
+  onSelect: (conversationId: string) => void;
+}) {
+  const history = trpc.admin.chatHistory.useQuery();
+
+  if (history.isError) {
+    return <ApiUnreachable detail={history.error.message} subject="chat history" />;
+  }
+  if (!history.data) {
+    return <p className="text-sm text-slate-500">Loading chat history…</p>;
+  }
+  if (history.data.length === 0) {
+    return <EmptyState>No conversations yet.</EmptyState>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {history.data.map((customer) => (
+        <CustomerSessions
+          key={customer.customerId}
+          customer={customer}
+          selectedConversationId={selectedConversationId}
+          onSelect={onSelect}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CustomerSessions({
+  customer,
+  selectedConversationId,
+  onSelect,
+}: {
+  customer: CustomerChatHistory;
+  selectedConversationId: string | null;
+  onSelect: (conversationId: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+      <div className="border-b border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          {/* Customer name + email are untrusted — escaped text. */}
+          <span className="truncate text-sm font-semibold text-slate-900">
+            {customer.customerName}
+          </span>
+          <span className="shrink-0 text-xs text-slate-400">
+            {customer.sessionCount}{" "}
+            {customer.sessionCount === 1 ? "session" : "sessions"}
+          </span>
+        </div>
+        <p className="truncate font-mono text-[11px] text-slate-400">
+          {customer.customerId} · {customer.email}
+        </p>
+      </div>
+      <ul className="divide-y divide-slate-100">
+        {customer.sessions.map((session) => {
+          const selected = session.conversationId === selectedConversationId;
+          return (
+            <li key={session.conversationId}>
+              <button
+                type="button"
+                onClick={() => onSelect(session.conversationId)}
+                className={`w-full px-3 py-2 text-left transition ${
+                  selected ? "bg-slate-100" : "bg-white hover:bg-slate-50"
+                }`}
+              >
+                <p className="truncate text-sm text-slate-700">
+                  {session.preview ?? "(no messages)"}
+                </p>
+                <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <Chip>
+                    {session.messageCount}{" "}
+                    {session.messageCount === 1 ? "msg" : "msgs"}
+                  </Chip>
+                  <Chip>{formatDateTime(session.createdAt)}</Chip>
+                </div>
+                <p className="mt-1 truncate font-mono text-[11px] text-slate-400">
+                  {session.conversationId}
+                </p>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function TranscriptViewer({
+  conversationId,
+}: {
+  conversationId: string | null;
+}) {
+  const transcript = trpc.admin.transcript.useQuery(
+    { conversationId: conversationId ?? "" },
+    { enabled: conversationId !== null },
+  );
+
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+        Session transcript
+      </h3>
+      {conversationId === null ? (
+        <EmptyState>Select a session to read its full transcript.</EmptyState>
+      ) : transcript.isError ? (
+        <ApiUnreachable
+          detail={transcript.error.message}
+          subject="this transcript"
+        />
+      ) : !transcript.data ? (
+        <p className="text-sm text-slate-500">Loading transcript…</p>
+      ) : transcript.data.messages.length === 0 ? (
+        <EmptyState>This session has no messages.</EmptyState>
+      ) : (
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+          {transcript.data.messages.map((message) => (
+            <MessageBubble key={message.id} message={message} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MessageBubble({ message }: { message: TranscriptMessage }) {
+  const isUser = message.role === "user";
+  return (
+    <div className={isUser ? "flex justify-end" : "flex justify-start"}>
+      <div
+        className={`max-w-[85%] rounded-2xl px-3 py-2 ${
+          isUser
+            ? "bg-slate-900 text-white"
+            : "bg-slate-100 text-slate-900"
+        }`}
+      >
+        {/* Message content is untrusted (incl. injection payloads) — rendered
+            as escaped text; whitespace-pre-wrap preserves newlines safely. */}
+        <p className="whitespace-pre-wrap break-words text-sm">
+          {message.content}
+        </p>
+        <p
+          className={`mt-1 text-[10px] ${
+            isUser ? "text-slate-300" : "text-slate-400"
+          }`}
+        >
+          {message.role} · {formatDateTime(message.createdAt)}
+          {message.runId ? ` · ${message.runId}` : ""}
+        </p>
+      </div>
     </div>
   );
 }

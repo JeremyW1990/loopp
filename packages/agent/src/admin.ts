@@ -32,6 +32,7 @@ import {
   appSettings,
   conversations,
   customers,
+  messages,
   orders,
   refunds,
   type Db,
@@ -277,6 +278,160 @@ export async function listRuns(db: Db): Promise<RunSummary[]> {
     .innerJoin(customers, eq(conversations.customerId, customers.id))
     .orderBy(desc(agentRuns.startedAt));
   return rows;
+}
+
+// --- Reads: chat history grouped by customer (user) → conversation (session) -
+
+/** One chat session (= one conversation thread) under a customer. */
+export interface ChatSessionSummary {
+  conversationId: string;
+  createdAt: Date;
+  messageCount: number;
+  lastMessageAt: Date | null;
+  /** First user message, truncated — a list preview. Escaped at render time. */
+  preview: string | null;
+}
+
+/** A customer (user) and all of their chat sessions, newest session first. */
+export interface CustomerChatHistory {
+  customerId: string;
+  customerName: string;
+  email: string;
+  sessionCount: number;
+  sessions: ChatSessionSummary[];
+}
+
+/**
+ * Every customer that has at least one conversation, each with their sessions
+ * (newest first) and per-session message counts + a preview of the opening
+ * user message. Grouped by user, then by session — the admin "Chat history"
+ * view. Pure read; all content is rendered as escaped text by the UI.
+ */
+export async function listChatHistory(db: Db): Promise<CustomerChatHistory[]> {
+  // One row per conversation: customer + message count + last-message time.
+  const rows = await db
+    .select({
+      conversationId: conversations.id,
+      customerId: conversations.customerId,
+      customerName: customers.name,
+      email: customers.email,
+      createdAt: conversations.createdAt,
+      messageCount: count(messages.id),
+      lastMessageAt: sql<Date | null>`max(${messages.createdAt})`,
+    })
+    .from(conversations)
+    .innerJoin(customers, eq(conversations.customerId, customers.id))
+    .leftJoin(messages, eq(messages.conversationId, conversations.id))
+    .groupBy(
+      conversations.id,
+      conversations.customerId,
+      customers.name,
+      customers.email,
+      conversations.createdAt,
+    )
+    .orderBy(desc(conversations.createdAt));
+
+  // Opening user message per conversation, for the list preview (Postgres
+  // DISTINCT ON; a static query with no interpolated input).
+  const previewRows = await db
+    .select({
+      conversationId: messages.conversationId,
+      content: messages.content,
+    })
+    .from(messages)
+    .where(eq(messages.role, "user"))
+    .orderBy(asc(messages.conversationId), asc(messages.createdAt));
+  const previewByConv = new Map<string, string>();
+  for (const p of previewRows) {
+    if (!previewByConv.has(p.conversationId)) {
+      previewByConv.set(p.conversationId, p.content);
+    }
+  }
+
+  // Group conversations under their customer, preserving newest-first order.
+  const byCustomer = new Map<string, CustomerChatHistory>();
+  for (const r of rows) {
+    let entry = byCustomer.get(r.customerId);
+    if (!entry) {
+      entry = {
+        customerId: r.customerId,
+        customerName: r.customerName,
+        email: r.email,
+        sessionCount: 0,
+        sessions: [],
+      };
+      byCustomer.set(r.customerId, entry);
+    }
+    const raw = previewByConv.get(r.conversationId) ?? null;
+    entry.sessions.push({
+      conversationId: r.conversationId,
+      createdAt: r.createdAt,
+      messageCount: Number(r.messageCount),
+      lastMessageAt: r.lastMessageAt,
+      preview: raw === null ? null : raw.slice(0, 120),
+    });
+    entry.sessionCount += 1;
+  }
+  return [...byCustomer.values()];
+}
+
+/** One message in a session transcript. */
+export interface TranscriptMessage {
+  id: string;
+  role: typeof messages.$inferSelect.role;
+  content: string;
+  runId: string | null;
+  createdAt: Date;
+}
+
+/** A session's full transcript: customer context + messages in time order. */
+export interface ChatTranscript {
+  conversationId: string;
+  customerId: string;
+  customerName: string;
+  messages: TranscriptMessage[];
+}
+
+/**
+ * One conversation's full transcript (user + assistant messages) in
+ * chronological order, with the run id on assistant turns so the viewer can
+ * jump to that run's trace. Unknown conversationId -> null (router maps it to
+ * NOT_FOUND). Content is rendered as escaped text by the UI.
+ */
+export async function getTranscript(
+  db: Db,
+  conversationId: string,
+): Promise<ChatTranscript | null> {
+  const [conv] = await db
+    .select({
+      conversationId: conversations.id,
+      customerId: conversations.customerId,
+      customerName: customers.name,
+    })
+    .from(conversations)
+    .innerJoin(customers, eq(conversations.customerId, customers.id))
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  if (!conv) return null;
+
+  const msgs = await db
+    .select({
+      id: messages.id,
+      role: messages.role,
+      content: messages.content,
+      runId: messages.runId,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
+    .orderBy(asc(messages.createdAt));
+
+  return {
+    conversationId: conv.conversationId,
+    customerId: conv.customerId,
+    customerName: conv.customerName,
+    messages: msgs,
+  };
 }
 
 /** One persisted step, returned VERBATIM (no recompute, no re-order). */
