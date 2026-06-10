@@ -51,12 +51,12 @@
 <script id="status-data" type="application/json">
 {
   "updated": "2026-06-09",
-  "currentCycle": { "task": "T4", "branch": "task/t4", "phase": "design", "startedAt": "2026-06-10", "note": "auto-merge mode — customer chat UI + live agent activity (SSE)" },
+  "currentCycle": { "task": "T5", "branch": "task/t5", "phase": "design", "startedAt": "2026-06-10", "note": "auto-merge mode — admin dashboard: traces, escalations, chaos toggle" },
   "tasks": {
     "T1": { "status": "done", "pr": null, "mergedAt": "2026-06-09", "note": "pre-loop: committed directly to main (15fd610)" },
     "T2": { "status": "done", "pr": 1, "mergedAt": "2026-06-09", "note": "57 tests, 0 fix rounds; human-reviewed (dryRun), auto-merge enabled from T3" },
     "T3": { "status": "done", "pr": 2, "mergedAt": "2026-06-10", "note": "156 tests; verify fleet hit session limit → recovered via independent clean-room review (8/8 invariants, 10/10 tests mutation-confirmed) + green CI" },
-    "T4": { "status": "todo" },
+    "T4": { "status": "done", "pr": 3, "mergedAt": "2026-06-10", "note": "180 tests; SSE run event bus + chat UI; engine-verified, 0 fix rounds, green CI" },
     "T5": { "status": "todo" },
     "T6": { "status": "todo" },
     "T7": { "status": "todo" }
@@ -69,7 +69,8 @@
     { "at": "2026-06-09", "task": "T2", "event": "engine verified (57 tests, 0 fix rounds) — PR #1 open for dryRun review" },
     { "at": "2026-06-09", "task": "T2", "event": "merged in #1 after human review + green CI — loop switches to auto-merge for T3..T7" },
     { "at": "2026-06-10", "task": "T3", "event": "engine code green (156 tests) but verify fleet hit Claude session limit; recovered with 2 independent clean-room verifiers (security 8/8, test-integrity 10/10 mutation-confirmed)" },
-    { "at": "2026-06-10", "task": "T3", "event": "merged in #2 after green CI — agent core complete" }
+    { "at": "2026-06-10", "task": "T3", "event": "merged in #2 after green CI — agent core complete" },
+    { "at": "2026-06-10", "task": "T4", "event": "merged in #3 — chat UI + SSE run event bus; 180 tests, engine-verified, green CI" }
   ]
 }
 </script>
