@@ -51,7 +51,7 @@
 <script id="status-data" type="application/json">
 {
   "updated": "2026-06-09",
-  "currentCycle": { "task": "T7", "branch": "task/t7", "phase": "design", "startedAt": "2026-06-10", "note": "auto-merge mode — final task: timed demo script + dry run" },
+  "currentCycle": null,
   "tasks": {
     "T1": { "status": "done", "pr": null, "mergedAt": "2026-06-09", "note": "pre-loop: committed directly to main (15fd610)" },
     "T2": { "status": "done", "pr": 1, "mergedAt": "2026-06-09", "note": "57 tests, 0 fix rounds; human-reviewed (dryRun), auto-merge enabled from T3" },
@@ -59,7 +59,7 @@
     "T4": { "status": "done", "pr": 3, "mergedAt": "2026-06-10", "note": "180 tests; SSE run event bus + chat UI; engine-verified, 0 fix rounds, green CI" },
     "T5": { "status": "done", "pr": 4, "mergedAt": "2026-06-10", "note": "admin dashboard; first verify returned not-verified (flaky suite, not a feature bug) → fixed latent cross-package DB race (workspace-concurrency=1), proven 8/8 + independent verifier 6/6, green CI" },
     "T6": { "status": "done", "pr": 5, "mergedAt": "2026-06-10", "note": "live red-team 15/15 PASS vs real agent; README; 2 defects caught+fixed (dead escalation regex; pnpm setup reserved-word → bootstrap); clean-clone verified incl. real happy-path refund; green CI" },
-    "T7": { "status": "todo" }
+    "T7": { "status": "done", "pr": 6, "mergedAt": "2026-06-10", "note": "timed 5-min demo script (4:50) + dry-run capture; brief-coverage verified; all 7 tasks complete" }
   },
   "log": [
     { "at": "2026-06-09", "task": "T1", "event": "merged directly to main pre-loop: scaffold, schema, seed, tRPC e2e (15fd610)" },
@@ -74,7 +74,9 @@
     { "at": "2026-06-10", "task": "T5", "event": "verify caught a real flaky-suite defect (not a feature bug); root-caused to concurrent cross-package DB access, fixed via workspace-concurrency=1; 207 tests now deterministic (8/8 local, independent verifier 6/6)" },
     { "at": "2026-06-10", "task": "T5", "event": "merged in #4 after green CI — admin dashboard complete; whole repo test suite now deterministic" },
     { "at": "2026-06-10", "task": "T6", "event": "live red-team 15/15 PASS against the real agent; clean-room caught a dead escalation matcher; clean-clone caught pnpm setup reserved-word collision (→ pnpm bootstrap) + missing @types/node; all fixed" },
-    { "at": "2026-06-10", "task": "T6", "event": "merged in #5 after green CI — adversarial evidence + zero-config README complete" }
+    { "at": "2026-06-10", "task": "T6", "event": "merged in #5 after green CI — adversarial evidence + zero-config README complete" },
+    { "at": "2026-06-10", "task": "T7", "event": "merged in #6 — 5-min demo script + dry-run capture" },
+    { "at": "2026-06-10", "task": null, "event": "🎉 ALL 7 TASKS COMPLETE — T1 pre-loop + T2–T7 via loop-engineering (6 PRs, all green CI). App is feature-complete, adversarially tested, demo-ready." }
   ]
 }
 </script>
