@@ -46,7 +46,11 @@
       "Policy rules live once, as TypeScript data in packages/agent; the customer-facing policy markdown and the eligibility engine both derive from that data. Never hand-edit the rendered doc.",
       "Money is integer cents everywhere; never floats.",
       "Every agent action (llm_call, tool_call, guardrail) persists an agent_steps row with input/output JSON, attempt counter (a retry is a NEW row with attempt+1), token counts where applicable, and durationMs.",
-      "Match the existing code style: tRPC v11 + superjson, zod validation on every external input (router input, tool args), Drizzle for all DB access, Tailwind for UI."
+      "Match the existing code style: tRPC v11 + superjson, zod validation on every external input (router input, tool args), Drizzle for all DB access, Tailwind for UI.",
+      "Layering is one-way (the rubric's 'clean separation of UI, API, LLM orchestration'): apps/web imports server TYPES only; apps/server routers are transport-thin (zod-validate → call packages/agent or packages/db → return) with no business logic; packages/agent never imports express/tRPC; the Anthropic SDK is imported in EXACTLY ONE module (packages/agent's LLM client wrapper — also the mock injection point).",
+      "Say only what happened: the agent's reply must match DB state — never claim a refund/escalation that has no row, never deny one that exists.",
+      "Zero-config empathy (the rubric's 'works out of the box'): failures an evaluator can hit (Docker down, busy port, missing ANTHROPIC_API_KEY) must produce actionable, friendly messages — in the UI where applicable — never raw stack traces.",
+      "Closed capability surface: the agent's tool registry is exactly the six known tools (asserted by a test); no tool interprets model-supplied text as SQL or code; all DB access is parameterized Drizzle; not_found responses are identical for nonexistent and foreign resources (no existence leak); user-influenced strings render as escaped text (no dangerouslySetInnerHTML)."
     ],
     "environment": [
       "Local DB (Docker Compose, must be up): postgresql://loopp:loopp@localhost:5436/loopp",
@@ -98,7 +102,9 @@
       "No refund with decidedBy='agent' exceeds 50000 cents. Refunds above 50000 cents only ever exist as status 'escalated', then 'approved'/'rejected' with decidedBy='admin'.",
       "Every tool invocation and LLM call in a run has a matching agent_steps row; a retry is a NEW row with attempt incremented, never an overwrite; seq strictly increases within a run.",
       "Tools return only data belonging to the conversation's customer; a foreign/unknown order id yields not_found AND a guardrail step row.",
-      "renderPolicyMarkdown(POLICY_RULES) equals the committed docs/refund-policy.md exactly (a test enforces sync), and the eligibility engine reads its thresholds from the same POLICY_RULES data."
+      "renderPolicyMarkdown(POLICY_RULES) equals the committed docs/refund-policy.md exactly (a test enforces sync), and the eligibility engine reads its thresholds from the same POLICY_RULES data.",
+      "At most one non-rejected refund exists per order/item: a repeat refund or escalation request returns the existing refund's status and never creates a duplicate row.",
+      "Assistant replies are consistent with the database: a reply asserting a processed refund or filed escalation has the matching refunds row (correct status and amount), and a reply asserting denial has none — the red-team suite checks both directions."
     ],
     "uiSurfaces": ["web"]
   }
