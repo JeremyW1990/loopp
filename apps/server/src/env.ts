@@ -14,6 +14,7 @@ const envSchema = z.object({
     .default("postgresql://loopp:loopp@localhost:5436/loopp"),
   PORT: z.coerce.number().default(4011),
   ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default("claude-sonnet-4-6"),
 });
 
 const parsed = envSchema.safeParse(process.env);

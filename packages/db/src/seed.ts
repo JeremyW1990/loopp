@@ -1,7 +1,5 @@
-import { config } from "dotenv";
-import { resolve } from "node:path";
 import { sql } from "drizzle-orm";
-import { createDb } from "./client";
+import type { Db } from "./client";
 import {
   appSettings,
   customers,
@@ -10,11 +8,6 @@ import {
   refunds,
 } from "./schema";
 import { SEED_CUSTOMERS, SEED_ORDERS, SEED_REFUNDS } from "./seed-data";
-
-config({ path: resolve(process.cwd(), "../../.env") });
-
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgresql://loopp:loopp@localhost:5436/loopp";
 
 function daysAgo(days: number): Date {
   const d = new Date(Date.now() - days * 86_400_000);
@@ -26,9 +19,17 @@ function itemSubtotalCents(items: { unitPriceCents: number; quantity: number }[]
   return items.reduce((sum, i) => sum + i.unitPriceCents * i.quantity, 0);
 }
 
-async function main() {
-  const { db, sql: pg } = createDb(DATABASE_URL);
-
+/**
+ * Truncates every table and re-inserts the seed fixtures on the caller's
+ * Drizzle handle. Date-relative values (order/delivery dates, refund windows)
+ * are resolved at CALL time — a DB seeded in the past silently drifts out of
+ * the policy windows, so test suites must reseed via this function in
+ * beforeAll rather than assume `pnpm db:seed` ran recently.
+ *
+ * Importing this module has no side effects: no dotenv, no connection
+ * management, no process.exit. The CLI entry lives in seed-cli.ts.
+ */
+export async function runSeed(db: Db): Promise<void> {
   await db.execute(sql`
     TRUNCATE TABLE agent_steps, agent_runs, messages, conversations,
       refunds, order_items, orders, customers, app_settings
@@ -99,20 +100,4 @@ async function main() {
   await db.insert(appSettings).values([
     { key: "fault_injection", value: false },
   ]);
-
-  const counts = await db.execute(sql`
-    SELECT
-      (SELECT count(*) FROM customers)   AS customers,
-      (SELECT count(*) FROM orders)      AS orders,
-      (SELECT count(*) FROM order_items) AS items,
-      (SELECT count(*) FROM refunds)     AS refunds
-  `);
-  console.log("Seed complete:", counts[0]);
-
-  await pg.end();
 }
-
-main().catch((err) => {
-  console.error("Seed failed:", err);
-  process.exit(1);
-});

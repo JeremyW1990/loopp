@@ -1,0 +1,65 @@
+import { conversations, customers, messages } from "@loopp/db";
+import { newId } from "@loopp/shared";
+import { TRPCError } from "@trpc/server";
+import { asc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { publicProcedure, router } from "../trpc";
+
+export const conversationRouter = router({
+  /** Start a chat session for an existing customer → { conversationId }. */
+  create: publicProcedure
+    .input(z.object({ customerId: z.string().min(1).max(64) }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const found = await ctx.db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(eq(customers.id, input.customerId))
+        .limit(1);
+      if (found.length === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Customer "${input.customerId}" not found`,
+        });
+      }
+
+      const conversationId = newId("conv");
+      await ctx.db.insert(conversations).values({
+        id: conversationId,
+        customerId: input.customerId,
+        createdAt: new Date(),
+      });
+      return { conversationId };
+    }),
+
+  /**
+   * Full message history, ordered exactly as the agent loop replays it
+   * (createdAt asc, id asc tiebreaker).
+   */
+  messages: publicProcedure
+    .input(z.object({ conversationId: z.string().min(1).max(64) }).strict())
+    .query(async ({ ctx, input }) => {
+      const found = await ctx.db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.id, input.conversationId))
+        .limit(1);
+      if (found.length === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Conversation "${input.conversationId}" not found`,
+        });
+      }
+
+      return ctx.db
+        .select({
+          id: messages.id,
+          role: messages.role,
+          content: messages.content,
+          runId: messages.runId,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .where(eq(messages.conversationId, input.conversationId))
+        .orderBy(asc(messages.createdAt), asc(messages.id));
+    }),
+});

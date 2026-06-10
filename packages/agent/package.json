@@ -12,7 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@loopp/shared": "workspace:*"
+    "@anthropic-ai/sdk": "^0.104.1",
+    "@loopp/db": "workspace:*",
+    "@loopp/shared": "workspace:*",
+    "drizzle-orm": "^0.38.0",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
