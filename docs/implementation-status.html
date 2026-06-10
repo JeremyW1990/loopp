@@ -51,10 +51,10 @@
 <script id="status-data" type="application/json">
 {
   "updated": "2026-06-09",
-  "currentCycle": null,
+  "currentCycle": { "task": "T2", "branch": "task/t2", "phase": "design", "startedAt": "2026-06-09", "note": "first loop cycle — dryRun (PR will await human review)" },
   "tasks": {
     "T1": { "status": "done", "pr": null, "mergedAt": "2026-06-09", "note": "pre-loop: committed directly to main (15fd610)" },
-    "T2": { "status": "todo" },
+    "T2": { "status": "in_progress" },
     "T3": { "status": "todo" },
     "T4": { "status": "todo" },
     "T5": { "status": "todo" },
@@ -63,7 +63,8 @@
   },
   "log": [
     { "at": "2026-06-09", "task": "T1", "event": "merged directly to main pre-loop: scaffold, schema, seed, tRPC e2e (15fd610)" },
-    { "at": "2026-06-09", "task": null, "event": "loop-engineering bootstrapped: config, plan, status dashboard, GitHub Actions CI" }
+    { "at": "2026-06-09", "task": null, "event": "loop-engineering bootstrapped: config, plan, status dashboard, GitHub Actions CI" },
+    { "at": "2026-06-09", "task": "T2", "event": "cycle started on task/t2 (dryRun)" }
   ]
 }
 </script>
