@@ -7,7 +7,15 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/trpc": "http://localhost:4011",
+      // Object-form (not the string shorthand) so SSE responses for
+      // chat.runEvents stream through unbuffered. The API already sets
+      // `x-accel-buffering: no` + `cache-control: no-transform`; http-proxy
+      // passes text/event-stream through chunk-by-chunk as long as we don't
+      // buffer the response (no selfHandleResponse).
+      "/trpc": {
+        target: "http://localhost:4011",
+        changeOrigin: true,
+      },
     },
   },
 });

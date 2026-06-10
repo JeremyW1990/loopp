@@ -18,6 +18,7 @@ import {
   createAnthropicLlmClient,
   MissingApiKeyError,
   MockPaymentGateway,
+  runEventBus,
   type AgentDeps,
   type LlmClient,
 } from "@loopp/agent";
@@ -43,4 +44,9 @@ export const agentDeps: AgentDeps = {
   getLlm,
   model: env.ANTHROPIC_MODEL,
   gateway: new MockPaymentGateway(),
+  // The process-wide live event bus: the loop emits run-lifecycle events into
+  // it, and chat.runEvents forwards them to the browser. Process-local — fans
+  // out within this one server process (a multi-instance deploy would need a
+  // shared transport; noted as a before-prod follow-up).
+  events: runEventBus,
 };

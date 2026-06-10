@@ -6,5 +6,7 @@ export * from "./pricing";
 export * from "./system-prompt";
 export * from "./gateway";
 export * from "./trace";
+export * from "./events";
+export * from "./event-replay";
 export * from "./tools";
 export * from "./loop";
