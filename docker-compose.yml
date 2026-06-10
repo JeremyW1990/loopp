@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: loopp-postgres
+    environment:
+      POSTGRES_USER: loopp
+      POSTGRES_PASSWORD: loopp
+      POSTGRES_DB: loopp
+    # 5436 on the host to avoid colliding with any locally-installed Postgres
+    ports:
+      - "5436:5432"
+    volumes:
+      - loopp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loopp -d loopp"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  loopp-pgdata:

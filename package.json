@@ -1,0 +1,17 @@
+{
+  "name": "loopp",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --stream dev",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:push": "pnpm --filter @loopp/db push",
+    "db:seed": "pnpm --filter @loopp/db seed",
+    "setup": "pnpm db:up && pnpm db:push && pnpm db:seed",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

@@ -1,0 +1,18 @@
+import { randomUUID } from "node:crypto";
+
+export type IdPrefix = "conv" | "msg" | "run" | "ref" | "pay";
+
+export function newId(prefix: IdPrefix): string {
+  return `${prefix}_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+}
+
+export function formatCents(cents: number): string {
+  return (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+  });
+}
+
+export function daysBetween(from: Date, to: Date): number {
+  return Math.floor((to.getTime() - from.getTime()) / 86_400_000);
+}
