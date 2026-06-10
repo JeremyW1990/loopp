@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://loopp:loopp@localhost:5436/loopp
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: loopp
+          POSTGRES_PASSWORD: loopp
+          POSTGRES_DB: loopp
+        ports:
+          - 5436:5432
+        options: >-
+          --health-cmd "pg_isready -U loopp -d loopp"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Push schema
+        run: pnpm --filter @loopp/db exec drizzle-kit push --force
+      - name: Seed database
+        run: pnpm db:seed
+      - name: Tests
+        run: pnpm test
+      - name: Build web
+        run: pnpm --filter @loopp/web build

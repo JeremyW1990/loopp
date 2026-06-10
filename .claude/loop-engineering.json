@@ -1,0 +1,105 @@
+{
+  "plan": {
+    "file": "docs/implementation_plan.html",
+    "format": "HTML page; the task list is the JSON manifest in the <script id=\"plan-data\"> tag (id, title, goal, surfaces[], acceptance[], outOfScope[], dependsOn[], detailed). Also read the §0 ground-rules section and the task's detailed <article id=\"<ID>\"> section."
+  },
+  "tracking": {
+    "file": "docs/implementation-status.html",
+    "format": "HTML page; live status is the JSON manifest in the <script id=\"status-data\"> tag: { updated, currentCycle, tasks: { <id>: { status, pr, mergedAt, note } }, log: [{ at, task, event }] }.",
+    "commit": true
+  },
+  "git": {
+    "baseBranch": "main",
+    "branchPrefix": "task/",
+    "mergeMethod": "squash",
+    "commitTrailer": ""
+  },
+  "ci": {
+    "required": true,
+    "maxFixAttempts": 2
+  },
+  "engine": {
+    "maxFixRounds": 3
+  },
+  "preflight": {
+    "infra": ["docker compose up -d --wait"],
+    "healthChecks": [
+      "docker compose exec -T postgres pg_isready -U loopp -d loopp"
+    ],
+    "devServers": {
+      "check": "lsof -i :4011 -i :5173",
+      "start": "pnpm dev",
+      "ports": [4011, 5173]
+    }
+  },
+  "project": {
+    "name": "Loopp — AI Refund Support Agent (interview take-home)",
+    "readFirst": [
+      "README.md",
+      "docs/implementation_plan.html (§0 ground rules + this task's <article>)",
+      "packages/db/src/schema.ts (the data model, incl. agent_runs/agent_steps trace tables)",
+      "packages/db/src/seed-data.ts (scenario coverage map — test fixtures mirror these orders)"
+    ],
+    "rules": [
+      "Authority boundary: the LLM never authorizes refunds. Deterministic code decides eligibility; process_refund recomputes the amount from item IDs in the DB and re-runs the eligibility engine server-side — model-supplied amounts or verdicts are never trusted.",
+      "Session-scoped identity: every agent tool resolves customerId from the conversation row, never from model input. A foreign or unknown order id returns not_found AND writes a guardrail agent_step.",
+      "Policy rules live once, as TypeScript data in packages/agent; the customer-facing policy markdown and the eligibility engine both derive from that data. Never hand-edit the rendered doc.",
+      "Money is integer cents everywhere; never floats.",
+      "Every agent action (llm_call, tool_call, guardrail) persists an agent_steps row with input/output JSON, attempt counter (a retry is a NEW row with attempt+1), token counts where applicable, and durationMs.",
+      "Match the existing code style: tRPC v11 + superjson, zod validation on every external input (router input, tool args), Drizzle for all DB access, Tailwind for UI."
+    ],
+    "environment": [
+      "Local DB (Docker Compose, must be up): postgresql://loopp:loopp@localhost:5436/loopp",
+      "API: Express + tRPC at http://localhost:4011 (/trpc, /health). Web: Vite at http://localhost:5173, proxies /trpc → 4011.",
+      "ANTHROPIC_API_KEY may be ABSENT in .env: runtime agent code must fail fast with a clear message at call time; tests and CI must never need it (mock the client). Default model claude-sonnet-4-6, overridable via ANTHROPIC_MODEL."
+    ],
+    "forbidden": [
+      "NEVER call the real Anthropic API from unit/integration tests or CI — inject a mocked client.",
+      "NEVER commit .env or any credential; the repo is public.",
+      "NEVER weaken policy enforcement, delete an invariant assertion, or special-case test inputs to make validation pass.",
+      "NEVER trigger deploys or touch non-local infrastructure; the only database you may write to is the local compose Postgres on :5436."
+    ],
+    "implementationNotes": [
+      "Schema changes: edit packages/db/src/schema.ts, apply with `pnpm db:push` (drizzle-kit push to the local DB), reseed with `pnpm db:seed` (idempotent TRUNCATE + insert).",
+      "Typecheck everything: `pnpm typecheck` at the repo root.",
+      "Tests: vitest, colocated *.test.ts; run all with `pnpm test` at the root (pnpm -r --if-present test). When introducing the first test to a package, add `\"test\": \"vitest run\"` to that package and vitest as a devDependency.",
+      "Run both dev servers with `pnpm dev` at the root (tsx watch on :4011 + vite on :5173).",
+      "Internal packages export TypeScript source directly (no build step); new packages go under packages/* with workspace:* deps."
+    ],
+    "reconAreas": [
+      {
+        "key": "data-layer",
+        "prompt": "Map packages/db for THIS task: which tables/enums in src/schema.ts it touches, which seed-data.ts scenarios are relevant fixtures, and how client.ts/createDb is consumed. State current shape with file:line refs."
+      },
+      {
+        "key": "agent-layer",
+        "prompt": "Map packages/agent as it currently exists for THIS task — policy rules/engine, tools, loop, tracing: what's present, what's missing vs the task goal, with file:line refs. If the package doesn't exist yet, say so."
+      },
+      {
+        "key": "api-surface",
+        "prompt": "Map apps/server: trpc.ts (context, procedures, superjson), routers/, env.ts, index.ts — which procedures exist, where this task's endpoints belong, and how context carries the db."
+      },
+      {
+        "key": "web-surface",
+        "prompt": "Map apps/web: routes/pages/components, trpc client wiring (main.tsx links config), styling conventions — what exists and what this task adds. If this task doesn't touch the web surface, say so explicitly."
+      }
+    ],
+    "staticChecks": [
+      { "label": "typecheck", "command": "`pnpm typecheck` at the repo root — every package must pass. No --fix." },
+      { "label": "tests", "command": "`pnpm test` at the repo root — the full vitest suite across all packages." },
+      { "label": "build", "command": "`pnpm --filter @loopp/web build` — tsc + vite production build must succeed." }
+    ],
+    "testing": {
+      "unit": "Vitest, colocated *.test.ts. Policy-engine tests are pure (no DB, no mocks). DB-touching integration tests connect to postgresql://loopp:loopp@localhost:5436/loopp via createDb() and must reseed (`pnpm db:seed`) or clean up rows they create. Agent-loop tests inject a mocked Anthropic client that scripts tool_use turns; assert (1) the tool-call sequence, (2) agent_steps rows (type, name, attempt, seq order, tokens), (3) refund/escalation DB side-effects. NEVER hit the real API.",
+      "e2e": "Drive the running API at http://localhost:4011 from a vitest spec using createTRPCClient + superjson (mirror apps/web/src/main.tsx link config); assert DB side-effects via packages/db. Specs that would trigger real LLM calls must skip when ANTHROPIC_API_KEY is absent (describe.skipIf) so they author-but-skip without a key. Browser automation is NOT required; UI behavior is covered by component/router tests."
+    },
+    "invariants": [
+      "A refunds row with status 'processed' or 'approved' always satisfies: amountCents equals the DB-computed subtotal of its itemIds (unitPrice × quantity, shipping excluded); none of its itemIds is final-sale; the order was delivered and within the 30-day window at decision time; and no itemId appears in more than one non-rejected refund.",
+      "No refund with decidedBy='agent' exceeds 50000 cents. Refunds above 50000 cents only ever exist as status 'escalated', then 'approved'/'rejected' with decidedBy='admin'.",
+      "Every tool invocation and LLM call in a run has a matching agent_steps row; a retry is a NEW row with attempt incremented, never an overwrite; seq strictly increases within a run.",
+      "Tools return only data belonging to the conversation's customer; a foreign/unknown order id yields not_found AND a guardrail step row.",
+      "renderPolicyMarkdown(POLICY_RULES) equals the committed docs/refund-policy.md exactly (a test enforces sync), and the eligibility engine reads its thresholds from the same POLICY_RULES data."
+    ],
+    "uiSurfaces": ["web"]
+  }
+}

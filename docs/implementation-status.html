@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loopp — Implementation Status</title>
+<style>
+  :root { --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc; --card:#fff;
+          --todo:#94a3b8; --prog:#b45309; --block:#dc2626; --done:#0f766e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color:var(--ink); background:var(--bg); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 13.5px; }
+  .bar { height: 10px; background:#e2e8f0; border-radius: 99px; overflow: hidden; margin: 14px 0 6px; }
+  .bar > div { height: 100%; background: var(--done); border-radius: 99px; transition: width .3s; }
+  .counts { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+  .cycle { border:1px solid #fcd34d; background:#fffbeb; border-radius:10px; padding: 12px 16px; margin: 0 0 22px; font-size: 14px; }
+  .cycle b { color:#92400e; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
+  th { background: #f1f5f9; font-size: 12.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  .id { font: 600 12px/1 ui-monospace, Menlo, monospace; color:#334155; }
+  .st { display:inline-block; border-radius:99px; padding: 2px 10px; font-size: 12px; font-weight: 600; color: #fff; }
+  .st.todo { background: var(--todo); } .st.in_progress { background: var(--prog); }
+  .st.blocked { background: var(--block); } .st.done { background: var(--done); }
+  .note { color: var(--muted); font-size: 12.5px; }
+  h2 { font-size: 17px; margin: 34px 0 10px; }
+  ul.log { list-style: none; padding: 0; margin: 0; }
+  ul.log li { padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+  ul.log .at { color: var(--muted); font: 12px ui-monospace, Menlo, monospace; margin-right: 10px; }
+  a { color: #0f766e; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Loopp — Implementation Status</h1>
+  <p class="sub">Live tracking for the loop-engineering cycle. Plan &amp; acceptance criteria: <a href="./implementation_plan.html">implementation_plan.html</a>. Updated: <span id="updated"></span></p>
+  <div class="bar"><div id="progress"></div></div>
+  <div class="counts" id="counts"></div>
+  <div id="cycle"></div>
+  <table>
+    <thead><tr><th>Task</th><th>Title</th><th>Status</th><th>PR</th><th>Merged</th><th>Note</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <h2>Log</h2>
+  <ul class="log" id="log"></ul>
+</div>
+
+<script id="status-data" type="application/json">
+{
+  "updated": "2026-06-09",
+  "currentCycle": null,
+  "tasks": {
+    "T1": { "status": "done", "pr": null, "mergedAt": "2026-06-09", "note": "pre-loop: committed directly to main (15fd610)" },
+    "T2": { "status": "todo" },
+    "T3": { "status": "todo" },
+    "T4": { "status": "todo" },
+    "T5": { "status": "todo" },
+    "T6": { "status": "todo" },
+    "T7": { "status": "todo" }
+  },
+  "log": [
+    { "at": "2026-06-09", "task": "T1", "event": "merged directly to main pre-loop: scaffold, schema, seed, tRPC e2e (15fd610)" },
+    { "at": "2026-06-09", "task": null, "event": "loop-engineering bootstrapped: config, plan, status dashboard, GitHub Actions CI" }
+  ]
+}
+</script>
+
+<script>
+  const TITLES = {
+    T1: "Monorepo scaffold + Postgres + schema + seed",
+    T2: "Policy engine: rules as data, rendered doc, eligibility",
+    T3: "Agent core: tool loop, mock gateway, trace persistence",
+    T4: "Customer chat UI with live agent activity (SSE)",
+    T5: "Admin dashboard: traces, escalations, chaos toggle",
+    T6: "Red-team evals + README (zero-config finish)",
+    T7: "Demo script + dry run",
+  };
+  const REPO = "https://github.com/JeremyW1990/loopp";
+  const data = JSON.parse(document.getElementById("status-data").textContent);
+
+  document.getElementById("updated").textContent = data.updated;
+
+  const ids = Object.keys(TITLES);
+  const done = ids.filter((id) => data.tasks[id]?.status === "done").length;
+  document.getElementById("progress").style.width = (100 * done) / ids.length + "%";
+  const by = (s) => ids.filter((id) => (data.tasks[id]?.status ?? "todo") === s).length;
+  document.getElementById("counts").textContent =
+    `${done}/${ids.length} done · ${by("in_progress")} in progress · ${by("blocked")} blocked · ${by("todo")} todo`;
+
+  const cy = document.getElementById("cycle");
+  if (data.currentCycle) {
+    const c = data.currentCycle;
+    cy.className = "cycle";
+    cy.innerHTML = `<b>Current cycle:</b> ${c.task} — ${TITLES[c.task] ?? c.title ?? ""} · phase <b>${c.phase}</b> · branch <code>${c.branch}</code> · started ${c.startedAt}${c.note ? ` · ${c.note}` : ""}`;
+  }
+
+  const rows = document.getElementById("rows");
+  for (const id of ids) {
+    const t = data.tasks[id] ?? { status: "todo" };
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td class="id">${id}</td>
+      <td>${TITLES[id]}</td>
+      <td><span class="st ${t.status}">${t.status.replace("_", " ")}</span></td>
+      <td>${t.pr ? `<a href="${REPO}/pull/${t.pr}">#${t.pr}</a>` : "—"}</td>
+      <td>${t.mergedAt ?? "—"}</td>
+      <td class="note">${t.note ?? ""}</td>`;
+    rows.appendChild(tr);
+  }
+
+  const log = document.getElementById("log");
+  for (const e of [...data.log].reverse()) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="at">${e.at}</span>${e.task ? `<span class="id">${e.task}</span> · ` : ""}${e.event}`;
+    log.appendChild(li);
+  }
+</script>
+</body>
+</html>
