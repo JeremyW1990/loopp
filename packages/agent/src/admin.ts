@@ -280,6 +280,39 @@ export async function listRuns(db: Db): Promise<RunSummary[]> {
   return rows;
 }
 
+/**
+ * The agent runs for ONE session (conversation), newest first — same shape as
+ * listRuns, scoped to a conversation. This is the "Agent runtime" column: a
+ * chat session has one run per processed user turn; clicking a run loads its
+ * step trace.
+ */
+export async function getSessionRuns(
+  db: Db,
+  conversationId: string,
+): Promise<RunSummary[]> {
+  const rows = await db
+    .select({
+      runId: agentRuns.id,
+      conversationId: agentRuns.conversationId,
+      customerId: conversations.customerId,
+      customerName: customers.name,
+      status: agentRuns.status,
+      model: agentRuns.model,
+      inputTokens: agentRuns.inputTokens,
+      outputTokens: agentRuns.outputTokens,
+      costUsd: agentRuns.costUsd,
+      durationMs: agentRuns.durationMs,
+      startedAt: agentRuns.startedAt,
+      finishedAt: agentRuns.finishedAt,
+    })
+    .from(agentRuns)
+    .innerJoin(conversations, eq(agentRuns.conversationId, conversations.id))
+    .innerJoin(customers, eq(conversations.customerId, customers.id))
+    .where(eq(agentRuns.conversationId, conversationId))
+    .orderBy(desc(agentRuns.startedAt));
+  return rows;
+}
+
 // --- Reads: chat history grouped by customer (user) → conversation (session) -
 
 /** One chat session (= one conversation thread) under a customer. */
@@ -351,6 +384,10 @@ export async function listChatHistory(db: Db): Promise<CustomerChatHistory[]> {
   // Group conversations under their customer, preserving newest-first order.
   const byCustomer = new Map<string, CustomerChatHistory>();
   for (const r of rows) {
+    // Skip empty sessions: selecting a customer creates a conversation row
+    // before any message is sent, so a 0-message conversation is noise, not a
+    // real chat. A customer whose only sessions are empty never appears.
+    if (Number(r.messageCount) === 0) continue;
     let entry = byCustomer.get(r.customerId);
     if (!entry) {
       entry = {

@@ -26,7 +26,7 @@
 
 import type { RouterOutputs } from "@loopp/server";
 import { formatCents } from "@loopp/shared";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { trpc } from "../trpc";
 
 // Server-derived view models — these can never drift from the router's actual
@@ -41,12 +41,20 @@ type ChatTranscript = RouterOutputs["admin"]["transcript"];
 type TranscriptMessage = ChatTranscript["messages"][number];
 
 export default function AdminPage() {
-  // The run whose trace is shown on the right. null until a row is clicked.
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  // The chat session whose transcript is shown. null until a session is clicked.
+  // The chat session whose transcript + runs are shown. null until clicked.
   const [selectedConversationId, setSelectedConversationId] = useState<
     string | null
   >(null);
+  // The run whose step trace is shown. null until a run is clicked (auto-set to
+  // the session's newest run when a session is selected).
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  // Picking a session resets the selected run so the runtime/trace columns
+  // re-cascade for the new session (the runs column auto-selects its newest).
+  const selectSession = (conversationId: string) => {
+    setSelectedConversationId(conversationId);
+    setSelectedRunId(null);
+  };
 
   return (
     <div className="space-y-6">
@@ -55,37 +63,136 @@ export default function AdminPage() {
           Admin dashboard
         </h1>
         <p className="text-sm text-slate-500">
-          Chat history, run traces, the escalation queue, and the
-          fault-injection control.
+          Follow a conversation left-to-right — from the customer's session into
+          the agent's runtime and full step trace.
         </p>
       </div>
 
       <StatsBar />
       <ChaosToggle />
 
-      <div>
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-slate-500">
-          Chat history · by customer &amp; session
+      {/* The connected flow: session → transcript → runtime → trace. Four
+          columns in one row, arrows between, so the relationship reads at a
+          glance. Stacks vertically on narrow screens. */}
+      <section>
+        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          Agent activity
         </h2>
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <ChatHistoryList
-            selectedConversationId={selectedConversationId}
-            onSelect={setSelectedConversationId}
-          />
-          <TranscriptViewer conversationId={selectedConversationId} />
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-2">
+          <FlowColumn title="Chat history" subtitle="customer › session">
+            <ChatHistoryList
+              selectedConversationId={selectedConversationId}
+              onSelect={selectSession}
+            />
+          </FlowColumn>
+          <FlowArrow />
+          <FlowColumn title="Session transcript" subtitle="the messages">
+            <TranscriptViewer conversationId={selectedConversationId} />
+          </FlowColumn>
+          <FlowArrow />
+          <FlowColumn title="Agent runtime" subtitle="runs in this session">
+            <SessionRuns
+              conversationId={selectedConversationId}
+              selectedRunId={selectedRunId}
+              onSelectRun={setSelectedRunId}
+            />
+          </FlowColumn>
+          <FlowArrow />
+          <FlowColumn title="Runtime trace" subtitle="the run's steps">
+            <TraceViewer runId={selectedRunId} />
+          </FlowColumn>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <RunsList
-          selectedRunId={selectedRunId}
-          onSelect={(runId) => setSelectedRunId(runId)}
-        />
-        <TraceViewer runId={selectedRunId} />
-      </div>
+      </section>
 
       <EscalationQueue />
     </div>
+  );
+}
+
+// --- Flow layout primitives --------------------------------------------------
+
+function FlowColumn({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0 flex-1 space-y-2">
+      <div className="min-h-[2.5rem]">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          {title}
+        </h3>
+        <p className="text-[11px] text-slate-400">{subtitle}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** The → between two flow columns (desktop only; columns stack on mobile). */
+function FlowArrow() {
+  return (
+    <div
+      className="hidden shrink-0 items-start pt-3 text-lg text-slate-300 lg:flex"
+      aria-hidden="true"
+    >
+      →
+    </div>
+  );
+}
+
+// --- Agent runtime: the runs for the selected session ------------------------
+
+function SessionRuns({
+  conversationId,
+  selectedRunId,
+  onSelectRun,
+}: {
+  conversationId: string | null;
+  selectedRunId: string | null;
+  onSelectRun: (runId: string) => void;
+}) {
+  const runs = trpc.admin.sessionRuns.useQuery(
+    { conversationId: conversationId ?? "" },
+    { enabled: conversationId !== null },
+  );
+
+  // When a session's runs load and none is selected yet, auto-select the newest
+  // so the trace column fills in immediately — the flow cascades on one click.
+  const firstRunId = runs.data?.[0]?.runId ?? null;
+  useEffect(() => {
+    if (conversationId !== null && selectedRunId === null && firstRunId !== null) {
+      onSelectRun(firstRunId);
+    }
+  }, [conversationId, selectedRunId, firstRunId, onSelectRun]);
+
+  if (conversationId === null) {
+    return <EmptyState>Pick a session to see its agent runs.</EmptyState>;
+  }
+  if (runs.isError) {
+    return <ApiUnreachable detail={runs.error.message} subject="runs" />;
+  }
+  if (!runs.data) {
+    return <p className="text-sm text-slate-500">Loading runs…</p>;
+  }
+  if (runs.data.length === 0) {
+    return <EmptyState>No agent runs for this session.</EmptyState>;
+  }
+  return (
+    <ul className="space-y-2">
+      {runs.data.map((run) => (
+        <RunRow
+          key={run.runId}
+          run={run}
+          selected={run.runId === selectedRunId}
+          onSelect={() => onSelectRun(run.runId)}
+        />
+      ))}
+    </ul>
   );
 }
 
@@ -194,30 +301,30 @@ function TranscriptViewer({
     { enabled: conversationId !== null },
   );
 
+  // Header is provided by the enclosing FlowColumn ("Session transcript").
+  if (conversationId === null) {
+    return <EmptyState>Pick a session to read its full transcript.</EmptyState>;
+  }
+  if (transcript.isError) {
+    return (
+      <ApiUnreachable
+        detail={transcript.error.message}
+        subject="this transcript"
+      />
+    );
+  }
+  if (!transcript.data) {
+    return <p className="text-sm text-slate-500">Loading transcript…</p>;
+  }
+  if (transcript.data.messages.length === 0) {
+    return <EmptyState>This session has no messages.</EmptyState>;
+  }
   return (
-    <section className="space-y-2">
-      <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Session transcript
-      </h3>
-      {conversationId === null ? (
-        <EmptyState>Select a session to read its full transcript.</EmptyState>
-      ) : transcript.isError ? (
-        <ApiUnreachable
-          detail={transcript.error.message}
-          subject="this transcript"
-        />
-      ) : !transcript.data ? (
-        <p className="text-sm text-slate-500">Loading transcript…</p>
-      ) : transcript.data.messages.length === 0 ? (
-        <EmptyState>This session has no messages.</EmptyState>
-      ) : (
-        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
-          {transcript.data.messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))}
-        </div>
-      )}
-    </section>
+    <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+      {transcript.data.messages.map((message) => (
+        <MessageBubble key={message.id} message={message} />
+      ))}
+    </div>
   );
 }
 
@@ -380,43 +487,7 @@ function ChaosToggle() {
   );
 }
 
-// --- Runs list ---------------------------------------------------------------
-
-function RunsList({
-  selectedRunId,
-  onSelect,
-}: {
-  selectedRunId: string | null;
-  onSelect: (runId: string) => void;
-}) {
-  const runs = trpc.admin.runs.useQuery();
-
-  return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Agent runs
-      </h2>
-      {runs.isError ? (
-        <ApiUnreachable detail={runs.error.message} subject="runs" />
-      ) : !runs.data ? (
-        <p className="text-sm text-slate-500">Loading runs…</p>
-      ) : runs.data.length === 0 ? (
-        <EmptyState>No agent runs yet.</EmptyState>
-      ) : (
-        <ul className="space-y-2">
-          {runs.data.map((run) => (
-            <RunRow
-              key={run.runId}
-              run={run}
-              selected={run.runId === selectedRunId}
-              onSelect={() => onSelect(run.runId)}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
+// --- Run row (one agent run; reused by the Agent-runtime column) -------------
 
 function RunRow({
   run,
@@ -472,22 +543,17 @@ function TraceViewer({ runId }: { runId: string | null }) {
     { enabled: runId !== null },
   );
 
-  return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-        Run trace
-      </h2>
-      {runId === null ? (
-        <EmptyState>Select a run to inspect its trace.</EmptyState>
-      ) : trace.isError ? (
-        <ApiUnreachable detail={trace.error.message} subject="this trace" />
-      ) : !trace.data ? (
-        <p className="text-sm text-slate-500">Loading trace…</p>
-      ) : (
-        <TraceBody trace={trace.data} />
-      )}
-    </section>
-  );
+  // Header is provided by the enclosing FlowColumn ("Runtime trace").
+  if (runId === null) {
+    return <EmptyState>Select a run to inspect its step trace.</EmptyState>;
+  }
+  if (trace.isError) {
+    return <ApiUnreachable detail={trace.error.message} subject="this trace" />;
+  }
+  if (!trace.data) {
+    return <p className="text-sm text-slate-500">Loading trace…</p>;
+  }
+  return <TraceBody trace={trace.data} />;
 }
 
 function TraceBody({ trace }: { trace: RunTrace }) {
