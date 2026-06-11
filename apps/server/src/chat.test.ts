@@ -357,6 +357,7 @@ describe("conversation.orders", () => {
         unitPriceCents: 5999,
         quantity: 1,
         isFinalSale: false,
+        refundState: null,
       },
       {
         id: "itm_1001_2",
@@ -364,6 +365,7 @@ describe("conversation.orders", () => {
         unitPriceCents: 3499,
         quantity: 2,
         isFinalSale: false,
+        refundState: null,
       },
     ]);
     // Every price is integer cents (the UI formats with formatCents; no floats).
@@ -465,6 +467,64 @@ describe("conversation.orders", () => {
       } as unknown as { conversationId: string }),
     );
     expect(error.code).toBe("BAD_REQUEST");
+  });
+
+  it("annotates items with refund state from the refunds table (processed → refunded, escalated → pending, none → null)", async () => {
+    // The order/item rows never change on a refund; the sidebar's refunded mark
+    // is derived here. Insert a paid-out refund on one item and a still-escalated
+    // one on another (both in ord_1001), leave a third item unmarked, and clean
+    // up after so no later test inherits these rows (seed runs once, no reset).
+    const conversationId = await createConversation("cus_001");
+    const { caller } = buildCaller();
+    const now = new Date();
+    try {
+      await db.insert(refunds).values([
+        {
+          id: "ref_state_refunded",
+          orderId: "ord_1001",
+          customerId: "cus_001",
+          conversationId: null,
+          runId: null,
+          amountCents: 5999,
+          itemIds: ["itm_1001_1"],
+          reason: "refund-state test (processed)",
+          status: "processed",
+          decidedBy: "agent",
+          adminNote: null,
+          gatewayRef: "gw_ref_state_refunded",
+          createdAt: now,
+          resolvedAt: now,
+        },
+        {
+          id: "ref_state_pending",
+          orderId: "ord_1001",
+          customerId: "cus_001",
+          conversationId: null,
+          runId: null,
+          amountCents: 3499,
+          itemIds: ["itm_1001_2"],
+          reason: "refund-state test (escalated)",
+          status: "escalated",
+          decidedBy: null,
+          adminNote: null,
+          gatewayRef: null,
+          createdAt: now,
+          resolvedAt: null,
+        },
+      ]);
+
+      const ordersOut = await caller.conversation.orders({ conversationId });
+      const itemsById = new Map(
+        ordersOut.flatMap((order) => order.items).map((item) => [item.id, item]),
+      );
+      expect(itemsById.get("itm_1001_1")?.refundState).toBe("refunded");
+      expect(itemsById.get("itm_1001_2")?.refundState).toBe("pending");
+      // An item with no covering refund is unmarked.
+      expect(itemsById.get("itm_1003_2")?.refundState).toBeNull();
+    } finally {
+      await db.delete(refunds).where(eq(refunds.id, "ref_state_refunded"));
+      await db.delete(refunds).where(eq(refunds.id, "ref_state_pending"));
+    }
   });
 });
 

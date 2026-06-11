@@ -4,6 +4,7 @@ import {
   messages,
   orderItems,
   orders,
+  refunds,
 } from "@loopp/db";
 import { newId } from "@loopp/shared";
 import { TRPCError } from "@trpc/server";
@@ -131,9 +132,40 @@ export const conversationRouter = router({
         else bucket.push(item);
       }
 
+      // Refund state per item is derived from the refunds table — the order and
+      // item rows themselves never change when a refund is issued. An item reads
+      // as "refunded" once a covering refund has paid out (processed) or been
+      // approved by an admin; "pending" while a refund for it is still escalated;
+      // and unmarked otherwise (a rejected refund leaves no mark).
+      const refundRows = await ctx.db
+        .select({ itemIds: refunds.itemIds, status: refunds.status })
+        .from(refunds)
+        .innerJoin(orders, eq(refunds.orderId, orders.id))
+        .where(eq(orders.customerId, conversation.customerId));
+      const refundedItemIds = new Set<string>();
+      const pendingItemIds = new Set<string>();
+      for (const refund of refundRows) {
+        const target =
+          refund.status === "processed" || refund.status === "approved"
+            ? refundedItemIds
+            : refund.status === "escalated"
+              ? pendingItemIds
+              : null;
+        if (target) for (const id of refund.itemIds) target.add(id);
+      }
+      const refundStateFor = (itemId: string): "refunded" | "pending" | null =>
+        refundedItemIds.has(itemId)
+          ? "refunded"
+          : pendingItemIds.has(itemId)
+            ? "pending"
+            : null;
+
       return orderRows.map((order) => ({
         ...order,
-        items: itemsByOrder.get(order.id) ?? [],
+        items: (itemsByOrder.get(order.id) ?? []).map((item) => ({
+          ...item,
+          refundState: refundStateFor(item.id),
+        })),
       }));
     }),
 });

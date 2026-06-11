@@ -556,11 +556,25 @@ function OrdersSidebar({ conversationId }: { conversationId: string }) {
 type OrderForSidebar = RouterOutputs["conversation"]["orders"][number];
 
 function OrderCard({ order }: { order: OrderForSidebar }) {
+  // The order/item rows never change when a refund is issued — refund state is
+  // derived from the refunds table by conversation.orders. The delivery status
+  // stays accurate; show a "Refunded" chip when every line item has been
+  // refunded (per-item chips below cover partial refunds).
+  const fullyRefunded =
+    order.items.length > 0 &&
+    order.items.every((item) => item.refundState === "refunded");
   return (
     <li className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-xs text-slate-500">{order.id}</span>
-        <OrderStatusBadge status={order.status} />
+        <div className="flex items-center gap-1.5">
+          {fullyRefunded && (
+            <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium uppercase text-violet-700">
+              Refunded
+            </span>
+          )}
+          <OrderStatusBadge status={order.status} />
+        </div>
       </div>
       <ul className="mt-2 space-y-1">
         {order.items.map((item) => (
@@ -575,6 +589,16 @@ function OrderCard({ order }: { order: OrderForSidebar }) {
               {item.isFinalSale && (
                 <span className="ml-1.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-700">
                   Final sale
+                </span>
+              )}
+              {item.refundState === "refunded" && (
+                <span className="ml-1.5 inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-violet-700">
+                  Refunded
+                </span>
+              )}
+              {item.refundState === "pending" && (
+                <span className="ml-1.5 inline-block rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-sky-700">
+                  Refund pending
                 </span>
               )}
             </span>
