@@ -9,16 +9,20 @@ const WEB_PORT = Number(process.env.WEB_PORT) || 5173;
 const API_PROXY = process.env.VITE_API_PROXY || "http://localhost:4011";
 
 // Vite blocks requests whose Host header isn't allow-listed (DNS-rebind
-// protection). To share a temporary public demo via a tunnel, Cloudflare
-// quick-tunnel subdomains (*.trycloudflare.com) are allowed by default —
-// `cloudflared tunnel --url http://localhost:5173` works out of the box. Add
-// other tunnels (e.g. ngrok) via VITE_ALLOWED_HOSTS (comma-separated), or set
-// it to "all" to accept any host. Local-only use is unaffected either way.
+// protection). Two tunnel options are allowed by default so a public demo
+// works out of the box:
+//   - Cloudflare quick tunnels (*.trycloudflare.com) —
+//     `cloudflared tunnel --url http://localhost:5173`
+//   - The project's named tunnel on *.mentiss.ai (e.g. loopp.mentiss.ai),
+//     which gives a stable hostname that survives restarts.
+// Add other tunnels (e.g. ngrok) via VITE_ALLOWED_HOSTS (comma-separated), or
+// set it to "all" to accept any host. Local-only use is unaffected either way.
 const allowedHosts =
   process.env.VITE_ALLOWED_HOSTS === "all"
     ? true
     : [
         ".trycloudflare.com",
+        ".mentiss.ai",
         ...(process.env.VITE_ALLOWED_HOSTS?.split(",")
           .map((h) => h.trim())
           .filter(Boolean) ?? []),
