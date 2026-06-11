@@ -2,6 +2,7 @@ import {
   approveEscalatedRefund,
   getAdminStats,
   getRunTrace,
+  getSessionRuns,
   getTranscript,
   listChatHistory,
   listEscalations,
@@ -53,6 +54,11 @@ function mapRefundError(error: unknown): never {
 export const adminRouter = router({
   /** All agent runs (newest first) with their conversation's customer. */
   runs: publicProcedure.query(({ ctx }) => listRuns(ctx.db)),
+
+  /** The agent runs for one session (conversation), newest first. */
+  sessionRuns: publicProcedure
+    .input(z.object({ conversationId: z.string().min(1).max(64) }).strict())
+    .query(({ ctx, input }) => getSessionRuns(ctx.db, input.conversationId)),
 
   /**
    * One run's header + its agent_steps verbatim in strict seq order. An unknown

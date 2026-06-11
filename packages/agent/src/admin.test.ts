@@ -34,6 +34,7 @@ import {
   RefundNotFoundError,
   approveEscalatedRefund,
   getRunTrace,
+  getSessionRuns,
   getTranscript,
   listChatHistory,
   rejectEscalatedRefund,
@@ -549,6 +550,51 @@ describe("listChatHistory — grouping by customer then session", () => {
 
     // Grouped, not flat: each customer appears once.
     expect(history.filter((c) => c.customerId === "cus_011")).toHaveLength(1);
+  });
+
+  it("excludes conversations that have zero messages", async () => {
+    // Selecting a customer creates a conversation row before any message is
+    // sent; a 0-message session is noise and must never appear.
+    const emptyConv = await createTestConversation(testDb.db, "cus_004");
+    const history = await listChatHistory(testDb.db);
+    const everySession = history.flatMap((c) => c.sessions);
+    expect(everySession.some((s) => s.conversationId === emptyConv)).toBe(false);
+    // Every rendered session has at least one message.
+    expect(everySession.every((s) => s.messageCount > 0)).toBe(true);
+  });
+});
+
+describe("getSessionRuns — agent runs scoped to one session", () => {
+  it("returns only the given conversation's runs and excludes other sessions'", async () => {
+    const gateway = new MockPaymentGateway();
+    const convA = await createTestConversation(testDb.db, "cus_006");
+    const depsA: AgentDeps = {
+      db: testDb.db,
+      getLlm: () => createScriptedLlmClient([endTurn("How can I help with a refund?")]),
+      model: MODEL,
+      gateway,
+    };
+    const runA = await runAgentTurn(depsA, convA, "Hello");
+
+    const convB = await createTestConversation(testDb.db, "cus_009");
+    const depsB: AgentDeps = {
+      db: testDb.db,
+      getLlm: () => createScriptedLlmClient([endTurn("Hi there!")]),
+      model: MODEL,
+      gateway,
+    };
+    const runB = await runAgentTurn(depsB, convB, "Hi");
+
+    const runsA = await getSessionRuns(testDb.db, convA);
+    expect(runsA.map((r) => r.runId)).toContain(runA.runId);
+    expect(runsA.every((r) => r.conversationId === convA)).toBe(true);
+    // convB's run is NOT in convA's list (and vice versa) — strict scoping.
+    expect(runsA.some((r) => r.runId === runB.runId)).toBe(false);
+  });
+
+  it("returns an empty array for a session with no runs", async () => {
+    const conv = await createTestConversation(testDb.db, "cus_013");
+    expect(await getSessionRuns(testDb.db, conv)).toEqual([]);
   });
 });
 
