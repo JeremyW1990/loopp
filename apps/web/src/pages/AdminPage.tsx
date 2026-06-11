@@ -737,10 +737,13 @@ function EscalationQueue() {
   const escalations = trpc.admin.escalations.useQuery();
 
   // After a resolve (approve/reject) succeeds, refetch the queue AND the stats
-  // (open-escalation count drops). Runs are unaffected (no new run).
+  // (open-escalation count drops), plus the open transcript — approve/reject now
+  // append a customer-facing confirmation message that should appear live.
+  // Runs are unaffected (no new agent run).
   const refetchAfterResolve = () => {
     void utils.admin.escalations.invalidate();
     void utils.admin.stats.invalidate();
+    void utils.admin.transcript.invalidate();
   };
 
   return (
