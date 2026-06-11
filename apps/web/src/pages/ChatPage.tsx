@@ -5,6 +5,7 @@ import { skipToken } from "@tanstack/react-query";
 import type { RouterOutputs, RunEvent } from "@loopp/server";
 import { formatCents } from "@loopp/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Markdown } from "../components/Markdown";
 import { trpc } from "../trpc";
 
 // ---------------------------------------------------------------------------
@@ -309,14 +310,16 @@ function MessageBubble({ message }: { message: MessageRow }) {
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`max-w-[80%] whitespace-pre-wrap break-words rounded-2xl px-4 py-2 text-sm ${
+        className={`max-w-[80%] break-words rounded-2xl px-4 py-2 text-sm ${
           isUser
-            ? "bg-slate-900 text-white"
+            ? "whitespace-pre-wrap bg-slate-900 text-white"
             : "bg-slate-100 text-slate-800"
         }`}
       >
-        {/* Escaped text — product names / refund reasons / replies are untrusted. */}
-        {message.content}
+        {/* Assistant replies render as safe markdown (no raw HTML); user text
+            stays plain escaped text. Both are untrusted and never use a raw-HTML
+            sink. */}
+        {isUser ? message.content : <Markdown>{message.content}</Markdown>}
       </div>
     </div>
   );

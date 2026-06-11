@@ -27,6 +27,7 @@
 import type { RouterOutputs } from "@loopp/server";
 import { formatCents } from "@loopp/shared";
 import { useEffect, useState } from "react";
+import { Markdown } from "../components/Markdown";
 import { trpc } from "../trpc";
 
 // Server-derived view models — these can never drift from the router's actual
@@ -339,11 +340,16 @@ function MessageBubble({ message }: { message: TranscriptMessage }) {
             : "bg-slate-100 text-slate-900"
         }`}
       >
-        {/* Message content is untrusted (incl. injection payloads) — rendered
-            as escaped text; whitespace-pre-wrap preserves newlines safely. */}
-        <p className="whitespace-pre-wrap break-words text-sm">
-          {message.content}
-        </p>
+        {/* Assistant replies render as safe markdown (react-markdown, no raw
+            HTML). User messages stay plain escaped text so an injected payload
+            is shown verbatim. */}
+        {isUser ? (
+          <p className="whitespace-pre-wrap break-words text-sm">
+            {message.content}
+          </p>
+        ) : (
+          <Markdown>{message.content}</Markdown>
+        )}
         <p
           className={`mt-1 text-[10px] ${
             isUser ? "text-slate-300" : "text-slate-400"
@@ -607,29 +613,37 @@ function StepRow({ step }: { step: TraceStep }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="flex w-full flex-col gap-1 px-3 py-2 text-left"
       >
-        <span className="w-6 shrink-0 font-mono text-xs text-slate-400">
-          {step.seq}
-        </span>
-        <StepTypeBadge type={step.type} />
-        {/* Step name is server-controlled (tool/guardrail name) but rendered as
-            escaped text regardless. */}
-        <span className="flex-1 truncate text-sm font-medium text-slate-800">
-          {step.name}
-        </span>
-        {step.attempt > 1 && (
-          <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-orange-700">
-            retry · attempt {step.attempt}
+        <div className="flex w-full items-center gap-2">
+          <span className="w-6 shrink-0 font-mono text-xs text-slate-400">
+            {step.seq}
           </span>
-        )}
-        {isError && (
-          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700">
-            error
+          <StepTypeBadge type={step.type} />
+          {/* Full step name (tool / model / guardrail) on its own line — server-
+              controlled, rendered as escaped text, never truncated. */}
+          <span className="break-words text-sm font-medium text-slate-800">
+            {step.name}
           </span>
-        )}
-        <StepMeta step={step} />
-        <span className="ml-1 text-slate-400">{open ? "▾" : "▸"}</span>
+          <span className="ml-auto shrink-0 text-slate-400">
+            {open ? "▾" : "▸"}
+          </span>
+        </div>
+        {/* Second line: meta + retry/error badges, so they never crowd the
+            name. */}
+        <div className="flex flex-wrap items-center gap-2 pl-8">
+          <StepMeta step={step} />
+          {step.attempt > 1 && (
+            <span className="rounded-full bg-orange-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-orange-700">
+              retry · attempt {step.attempt}
+            </span>
+          )}
+          {isError && (
+            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-700">
+              error
+            </span>
+          )}
+        </div>
       </button>
 
       {open && (
@@ -655,9 +669,7 @@ function StepMeta({ step }: { step: TraceStep }) {
   }
   if (parts.length === 0) return null;
   return (
-    <span className="hidden whitespace-nowrap text-[11px] text-slate-400 sm:inline">
-      {parts.join(" · ")}
-    </span>
+    <span className="text-[11px] text-slate-400">{parts.join(" · ")}</span>
   );
 }
 
