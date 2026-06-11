@@ -11,6 +11,7 @@ The interesting part isn't that an LLM can talk to a customer. It's that the LLM
 - [Quickstart (3 commands)](#quickstart-3-commands)
 - [Busy-machine overrides (port / DB already in use)](#busy-machine-overrides-port--db-already-in-use)
 - [Share a temporary public URL (no deploy)](#share-a-temporary-public-url-no-deploy)
+- [Stable public URL (named Cloudflare tunnel)](#stable-public-url-named-cloudflare-tunnel)
 - [Architecture](#architecture)
 - [Security model](#security-model)
   - [Authority boundary — the LLM never authorizes refunds](#authority-boundary--the-llm-never-authorizes-refunds)
@@ -98,6 +99,33 @@ cloudflared tunnel --url http://localhost:5173       # prints a https://<random>
 The Vite dev server allows `*.trycloudflare.com` hosts by default (see `apps/web/vite.config.ts`); for other tunnels (e.g. ngrok) set `VITE_ALLOWED_HOSTS=<host>` (comma-separated, or `all`) before `pnpm dev`.
 
 > **Mind the trade-offs.** The URL only lives while your laptop is awake and these three processes run (use `caffeinate` on macOS to prevent sleep). There is **no auth**, and every chat message spends your `ANTHROPIC_API_KEY` — so share the link narrowly and stop the tunnel (`Ctrl-C`) when you're done. Your key stays server-side and is never exposed to the browser. For an always-on link, deploy instead (Railway/Render + Neon/Supabase).
+
+---
+
+## Stable public URL (named Cloudflare tunnel)
+
+A quick tunnel mints a new random hostname every run. For a URL that stays put across restarts, use a **named** tunnel bound to a domain you control on Cloudflare. This project runs at **https://loopp.mentiss.ai**. One-time setup:
+
+```bash
+cloudflared tunnel login                              # browser: authorize your zone (e.g. mentiss.ai)
+cloudflared tunnel create loopp                       # writes ~/.cloudflared/<UUID>.json — SECRET, never commit
+cloudflared tunnel route dns loopp loopp.mentiss.ai   # CNAME loopp -> <UUID>.cfargotunnel.com
+```
+
+Point it at the web server in `~/.cloudflared/config.yml` (one rule covers the whole app — Vite proxies `/trpc` + SSE to the API):
+
+```yaml
+tunnel: <UUID>
+credentials-file: /Users/<you>/.cloudflared/<UUID>.json
+ingress:
+  - hostname: loopp.mentiss.ai
+    service: http://localhost:5173
+  - service: http_status:404
+```
+
+Vite already allows `*.mentiss.ai` (see `apps/web/vite.config.ts`). To keep the tunnel up across crashes/reboots, run `cloudflared tunnel run loopp` from a macOS `launchd` agent with `KeepAlive=true` (the OS restarts it automatically) rather than a terminal you have to babysit.
+
+> **Still laptop-hosted.** The tunnel only forwards to `localhost`, so the machine must stay on, awake (`caffeinate`), and online with `pnpm dev` + Postgres running — only the tunnel auto-restarts, not the app. The `<UUID>.json` credential is a secret: it lives in `~/.cloudflared/` and is never committed. Same no-auth / spends-`ANTHROPIC_API_KEY` caveats as the quick tunnel. For a link that's independent of your laptop, deploy instead (Railway/Render + Neon/Supabase).
 
 ---
 
