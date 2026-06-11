@@ -37,6 +37,7 @@ import {
   refunds,
   type Db,
 } from "@loopp/db";
+import { newId } from "@loopp/shared";
 import { and, asc, count, desc, eq, sql } from "drizzle-orm";
 import { GatewayUnavailableError, type MockPaymentGateway } from "./gateway";
 import { readFaultInjection } from "./tools";
@@ -180,7 +181,7 @@ export async function approveEscalatedRefund(
   // Durable exactly-once guard: write 'approved' ONLY while still 'escalated'.
   // A concurrent second approve (or a reject that won the race) updates 0 rows
   // and falls through to re-read the now-resolved row below.
-  await deps.db
+  const transitioned = await deps.db
     .update(refunds)
     .set({
       status: "approved",
@@ -188,7 +189,20 @@ export async function approveEscalatedRefund(
       gatewayRef,
       resolvedAt: now(),
     })
-    .where(and(eq(refunds.id, refundId), eq(refunds.status, "escalated")));
+    .where(and(eq(refunds.id, refundId), eq(refunds.status, "escalated")))
+    .returning({ id: refunds.id });
+
+  // Close the loop in the customer-facing transcript — but ONLY when THIS call
+  // performed the escalated->approved transition (returning is non-empty). A
+  // double-click or replay updates 0 rows here and must not post a duplicate.
+  if (transitioned.length > 0 && row.conversationId !== null) {
+    await postResolutionMessage(
+      deps.db,
+      row.conversationId,
+      approvalMessageText(row.amountCents, gatewayRef),
+      now,
+    );
+  }
 
   // Return the resolved row (whoever won the race wrote it).
   const resolved = await loadRefund(deps.db, refundId);
@@ -223,7 +237,7 @@ export async function rejectEscalatedRefund(
 
   // No gateway call — rejection moves no money. Same status guard as approve:
   // exactly one of a concurrent approve/reject wins the row.
-  await deps.db
+  const transitioned = await deps.db
     .update(refunds)
     .set({
       status: "rejected",
@@ -231,11 +245,66 @@ export async function rejectEscalatedRefund(
       adminNote,
       resolvedAt: now(),
     })
-    .where(and(eq(refunds.id, refundId), eq(refunds.status, "escalated")));
+    .where(and(eq(refunds.id, refundId), eq(refunds.status, "escalated")))
+    .returning({ id: refunds.id });
+
+  // Same exactly-once guard as approve: record the decline in the transcript
+  // only when this call won the escalated->rejected transition.
+  if (transitioned.length > 0 && row.conversationId !== null) {
+    await postResolutionMessage(
+      deps.db,
+      row.conversationId,
+      rejectionMessageText(adminNote),
+      now,
+    );
+  }
 
   const resolved = await loadRefund(deps.db, refundId);
   if (resolved === null) throw new RefundNotFoundError(refundId);
   return resolved;
+}
+
+// --- Transcript write-back: record an admin's resolution to the customer ------
+
+/**
+ * Append a customer-facing assistant message recording an admin's resolution of
+ * an escalation, so the Session transcript closes the loop the agent opened with
+ * its "escalated for review" reply. runId is null: this is a human action, not
+ * an agent run. The caller guarantees exactly-once (it posts only when its
+ * status-guarded UPDATE actually transitioned the row).
+ */
+async function postResolutionMessage(
+  db: Db,
+  conversationId: string,
+  content: string,
+  now: () => Date,
+): Promise<void> {
+  await db.insert(messages).values({
+    id: newId("msg"),
+    conversationId,
+    role: "assistant",
+    content,
+    runId: null,
+    createdAt: now(),
+  });
+}
+
+function formatUsd(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function approvalMessageText(amountCents: number, gatewayRef: string): string {
+  return (
+    `Good news — your refund of **${formatUsd(amountCents)}** has been approved by ` +
+    `our team and processed to your original payment method. Reference: \`${gatewayRef}\`.`
+  );
+}
+
+function rejectionMessageText(adminNote: string): string {
+  return (
+    `We've reviewed your refund request, and unfortunately it could not be approved ` +
+    `at this time. ${adminNote}`
+  );
 }
 
 // --- Reads: runs, trace, escalations, stats ----------------------------------

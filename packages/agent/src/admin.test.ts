@@ -95,6 +95,7 @@ interface SeedRefundInput {
   amountCents: number;
   status: "escalated" | "processed" | "rejected";
   reason?: string;
+  conversationId?: string;
 }
 
 /**
@@ -110,7 +111,7 @@ async function insertRefund(input: SeedRefundInput): Promise<string> {
     id: input.id,
     orderId: input.orderId,
     customerId: input.customerId,
-    conversationId: null,
+    conversationId: input.conversationId ?? null,
     runId: null,
     amountCents: input.amountCents,
     itemIds: input.itemIds,
@@ -406,6 +407,82 @@ describe("approve/reject guards", () => {
     );
     expect(error).toBeInstanceOf(RefundNotEscalatedError);
     expect((error as RefundNotEscalatedError).status).toBe("processed");
+  });
+});
+
+// --- (d2) Resolution write-back: the transcript closes the loop ----------------
+
+describe("escalation resolution posts a transcript message (exactly-once)", () => {
+  async function assistantMessages(conversationId: string) {
+    const rows = await testDb.db
+      .select()
+      .from(messages)
+      .where(eq(messages.conversationId, conversationId));
+    return rows.filter((m) => m.role === "assistant");
+  }
+
+  it("approve appends exactly one assistant confirmation with the amount; a double-approve does not duplicate it", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_001");
+    const refundId = "ref_msg_approve";
+    await insertRefund({
+      id: refundId,
+      orderId: "ord_1002",
+      customerId: "cus_001",
+      conversationId,
+      itemIds: ["itm_1002_1"],
+      amountCents: 89900,
+      status: "escalated",
+    });
+    const { deps } = adminDeps();
+
+    await approveEscalatedRefund(deps, refundId);
+    await approveEscalatedRefund(deps, refundId); // double-click / replay
+
+    const posted = await assistantMessages(conversationId);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.content).toContain("$899.00");
+    expect(posted[0]?.content.toLowerCase()).toContain("approved");
+    // A human action, not an agent run.
+    expect(posted[0]?.runId).toBeNull();
+  });
+
+  it("reject appends exactly one assistant message carrying the admin note; a double-reject does not duplicate it", async () => {
+    const conversationId = await createTestConversation(testDb.db, "cus_001");
+    const refundId = "ref_msg_reject";
+    await insertRefund({
+      id: refundId,
+      orderId: "ord_1002",
+      customerId: "cus_001",
+      conversationId,
+      itemIds: ["itm_1002_1"],
+      amountCents: 89900,
+      status: "escalated",
+    });
+    const { deps } = adminDeps();
+
+    const note = "Outside the 30-day return window.";
+    await rejectEscalatedRefund(deps, refundId, note);
+    await rejectEscalatedRefund(deps, refundId, "a different second note");
+
+    const posted = await assistantMessages(conversationId);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]?.content).toContain(note);
+  });
+
+  it("resolving a refund that has no conversation posts no message and does not throw", async () => {
+    const refundId = "ref_msg_noconv";
+    await insertRefund({
+      id: refundId,
+      orderId: "ord_1002",
+      customerId: "cus_001",
+      itemIds: ["itm_1002_1"],
+      amountCents: 89900,
+      status: "escalated",
+    });
+    const { deps } = adminDeps();
+
+    const resolved = await approveEscalatedRefund(deps, refundId);
+    expect(resolved.status).toBe("approved");
   });
 });
 
