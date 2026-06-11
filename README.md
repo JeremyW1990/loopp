@@ -2,9 +2,32 @@
 
 An AI customer-support agent that **processes or denies e-commerce refunds against a strict refund policy** — with a customer chat UI and an admin dashboard that exposes the agent's full reasoning trace (tool I/O, retries, token cost, latency).
 
-The interesting part isn't that an LLM can talk to a customer. It's that the LLM is **never the authority**: deterministic code decides eligibility, `process_refund` has no amount parameter and recomputes money from the database, and a [≥14-scenario adversarial suite](#red-team-adversarial-evidence) proves the policy holds against the real model — sympathy, fake-CEO pressure, prompt injection, SQL-injection strings, an 8-turn wear-down — by ignoring what the model *said* and asserting what the database *contains*.
+The interesting part isn't that an LLM can talk to a customer. It's that the LLM is **never the authority**: deterministic code decides eligibility, `process_refund` has no amount parameter and recomputes money from the database, and a [≥14-scenario adversarial suite](#red-team--adversarial-evidence) proves the policy holds against the real model — sympathy, fake-CEO pressure, prompt injection, SQL-injection strings, an 8-turn wear-down — by ignoring what the model *said* and asserting what the database *contains*.
 
 **Stack:** TypeScript end-to-end — React (Vite) · tRPC v11 · Express · Drizzle ORM · PostgreSQL · Anthropic Claude (raw tool calling).
+
+## Index
+
+- [Quickstart (3 commands)](#quickstart-3-commands)
+- [Busy-machine overrides (port / DB already in use)](#busy-machine-overrides-port--db-already-in-use)
+- [Share a temporary public URL (no deploy)](#share-a-temporary-public-url-no-deploy)
+- [Architecture](#architecture)
+- [Security model](#security-model)
+  - [Authority boundary — the LLM never authorizes refunds](#authority-boundary--the-llm-never-authorizes-refunds)
+  - [Session-scoped identity — no order id to spoof](#session-scoped-identity--no-order-id-to-spoof)
+  - [Closed capability surface — no code or SQL path exists](#closed-capability-surface--no-code-or-sql-path-exists)
+  - [Worked example — the `ord_1018` injection product](#worked-example--the-ord_1018-injection-product)
+- [Observability — anatomy of a trace](#observability--anatomy-of-a-trace)
+- [Edge cases, walked through](#edge-cases-walked-through)
+  - [Policy decisions — the deterministic engine, not the model](#policy-decisions--the-deterministic-engine-not-the-model)
+  - [Security — the agent holds the line](#security--the-agent-holds-the-line)
+  - [Human-in-the-loop — over $500 needs an admin](#human-in-the-loop--over-500-needs-an-admin)
+  - [Resilience — the payment gateway fails](#resilience--the-payment-gateway-fails)
+- [Red-team — adversarial evidence](#red-team--adversarial-evidence)
+  - [Results](#results)
+- [What I'd add before prod](#what-id-add-before-prod)
+- [How LLMs were used to build this](#how-llms-were-used-to-build-this)
+- [Scripts](#scripts)
 
 ---
 
