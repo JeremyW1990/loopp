@@ -62,6 +62,22 @@ Set them in `.env` before `pnpm bootstrap` / `pnpm dev`. The host-side Postgres 
 
 ---
 
+## Share a temporary public URL (no deploy)
+
+To let someone click around without deploying, expose the running dev stack through a free [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/). You only need **one tunnel on port 5173** — the web server proxies `/trpc` (and the SSE chat stream) to the API internally, so a single tunnel exposes the whole app:
+
+```bash
+brew install cloudflared                            # once
+pnpm dev                                             # API :4011 + web :5173
+cloudflared tunnel --url http://localhost:5173       # prints a https://<random>.trycloudflare.com URL
+```
+
+The Vite dev server allows `*.trycloudflare.com` hosts by default (see `apps/web/vite.config.ts`); for other tunnels (e.g. ngrok) set `VITE_ALLOWED_HOSTS=<host>` (comma-separated, or `all`) before `pnpm dev`.
+
+> **Mind the trade-offs.** The URL only lives while your laptop is awake and these three processes run (use `caffeinate` on macOS to prevent sleep). There is **no auth**, and every chat message spends your `ANTHROPIC_API_KEY` — so share the link narrowly and stop the tunnel (`Ctrl-C`) when you're done. Your key stays server-side and is never exposed to the browser. For an always-on link, deploy instead (Railway/Render + Neon/Supabase).
+
+---
+
 ## Architecture
 
 One-way dependency layering, enforced by review and a test that asserts the Anthropic SDK lives in exactly one module. The web bundle imports server **types only**; server routers are transport-thin (zod-validate → call into the packages → return) and contain no business logic; `packages/agent` is the security perimeter and **never imports express or tRPC**.
