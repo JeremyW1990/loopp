@@ -281,9 +281,10 @@ export async function listRuns(db: Db): Promise<RunSummary[]> {
 }
 
 /**
- * The agent runs for ONE session (conversation), newest first — same shape as
- * listRuns, scoped to a conversation. This is the "Agent runtime" column: a
- * chat session has one run per processed user turn; clicking a run loads its
+ * The agent runs for ONE session (conversation) in TIMELINE order — oldest
+ * first, newest last — same shape as listRuns, scoped to a conversation. This
+ * is the "Agent runtime" column: a chat session has one run per processed user
+ * turn, read top-to-bottom in the order they happened; clicking a run loads its
  * step trace.
  */
 export async function getSessionRuns(
@@ -309,7 +310,7 @@ export async function getSessionRuns(
     .innerJoin(conversations, eq(agentRuns.conversationId, conversations.id))
     .innerJoin(customers, eq(conversations.customerId, customers.id))
     .where(eq(agentRuns.conversationId, conversationId))
-    .orderBy(desc(agentRuns.startedAt));
+    .orderBy(asc(agentRuns.startedAt));
   return rows;
 }
 

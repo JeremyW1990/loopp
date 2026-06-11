@@ -164,12 +164,15 @@ function SessionRuns({
 
   // When a session's runs load and none is selected yet, auto-select the newest
   // so the trace column fills in immediately — the flow cascades on one click.
-  const firstRunId = runs.data?.[0]?.runId ?? null;
+  // Runs are in timeline order (oldest first), so the newest is the LAST one.
+  const runList = runs.data;
+  const newestRunId =
+    runList && runList.length > 0 ? runList[runList.length - 1].runId : null;
   useEffect(() => {
-    if (conversationId !== null && selectedRunId === null && firstRunId !== null) {
-      onSelectRun(firstRunId);
+    if (conversationId !== null && selectedRunId === null && newestRunId !== null) {
+      onSelectRun(newestRunId);
     }
-  }, [conversationId, selectedRunId, firstRunId, onSelectRun]);
+  }, [conversationId, selectedRunId, newestRunId, onSelectRun]);
 
   if (conversationId === null) {
     return <EmptyState>Pick a session to see its agent runs.</EmptyState>;
