@@ -574,7 +574,10 @@ describe("getSessionRuns — agent runs scoped to one session", () => {
       model: MODEL,
       gateway,
     };
-    const runA = await runAgentTurn(depsA, convA, "Hello");
+    // Two turns in session A → two runs. getLlm() returns a fresh scripted
+    // client per run, so each turn ends cleanly.
+    const runA1 = await runAgentTurn(depsA, convA, "Hello");
+    const runA2 = await runAgentTurn(depsA, convA, "Thanks, anything else?");
 
     const convB = await createTestConversation(testDb.db, "cus_009");
     const depsB: AgentDeps = {
@@ -586,7 +589,8 @@ describe("getSessionRuns — agent runs scoped to one session", () => {
     const runB = await runAgentTurn(depsB, convB, "Hi");
 
     const runsA = await getSessionRuns(testDb.db, convA);
-    expect(runsA.map((r) => r.runId)).toContain(runA.runId);
+    // Timeline order: oldest run first, newest run last.
+    expect(runsA.map((r) => r.runId)).toEqual([runA1.runId, runA2.runId]);
     expect(runsA.every((r) => r.conversationId === convA)).toBe(true);
     // convB's run is NOT in convA's list (and vice versa) — strict scoping.
     expect(runsA.some((r) => r.runId === runB.runId)).toBe(false);
