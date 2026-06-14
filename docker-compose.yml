@@ -2,6 +2,9 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: loopp-postgres
+    # Come back automatically after a Docker/daemon restart so a long-running
+    # demo (named tunnel) survives reboots without manual intervention.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: loopp
       POSTGRES_PASSWORD: loopp
