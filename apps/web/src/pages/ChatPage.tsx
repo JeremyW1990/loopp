@@ -162,7 +162,11 @@ function CustomerPicker({
 
   if (customers.isError) {
     return (
-      <ApiUnreachable detail={customers.error.message} subject="customers" />
+      <ApiUnreachable
+        detail={customers.error.message}
+        subject="customers"
+        onRetry={() => void customers.refetch()}
+      />
     );
   }
   if (!customers.data) {
@@ -275,7 +279,13 @@ function Conversation({ conversationId }: { conversationId: string }) {
   };
 
   if (messages.isError) {
-    return <ApiUnreachable detail={messages.error.message} subject="messages" />;
+    return (
+      <ApiUnreachable
+        detail={messages.error.message}
+        subject="messages"
+        onRetry={() => void messages.refetch()}
+      />
+    );
   }
 
   const thread = messages.data ?? [];
@@ -575,7 +585,13 @@ function OrdersSidebar({ conversationId }: { conversationId: string }) {
   const orders = trpc.conversation.orders.useQuery({ conversationId });
 
   if (orders.isError) {
-    return <ApiUnreachable detail={orders.error.message} subject="orders" />;
+    return (
+      <ApiUnreachable
+        detail={orders.error.message}
+        subject="orders"
+        onRetry={() => void orders.refetch()}
+      />
+    );
   }
 
   return (
@@ -712,7 +728,11 @@ function PolicyModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="overflow-y-auto px-5 py-4">
           {policy.isError ? (
-            <ApiUnreachable detail={policy.error.message} subject="policy" />
+            <ApiUnreachable
+              detail={policy.error.message}
+              subject="policy"
+              onRetry={() => void policy.refetch()}
+            />
           ) : !policy.data ? (
             <p className="text-sm text-slate-500">Loading policy…</p>
           ) : (
@@ -765,14 +785,31 @@ function MissingKeyBanner({
 function ApiUnreachable({
   detail,
   subject,
+  onRetry,
 }: {
   detail: string;
   subject: string;
+  // When provided, render a "Try again" button so a TRANSIENT failure (e.g. the
+  // API momentarily restarting) is recoverable in one click instead of a full
+  // page reload — otherwise the error is a dead end (this stranded the customer
+  // picker after a brief backend blip).
+  onRetry?: () => void;
 }) {
   return (
-    <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      Could not load {subject} — is the server running? ({detail})
-    </p>
+    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      <p>
+        Could not load {subject} — is the server running? ({detail})
+      </p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-2 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
+        >
+          Try again
+        </button>
+      )}
+    </div>
   );
 }
 
