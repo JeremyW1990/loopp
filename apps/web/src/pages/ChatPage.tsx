@@ -35,68 +35,12 @@ const SUGGESTED_PROMPTS: readonly string[] = [
   "I want to return my standing desk for a full refund.",
 ];
 
-// Persisted across navigation/reload so returning to the chat reopens the same
-// customer's thread (with its history) instead of an empty one.
-const ACTIVE_CUSTOMER_KEY = "loopp.activeCustomerId";
-
-function readSavedCustomer(): string | null {
-  try {
-    return localStorage.getItem(ACTIVE_CUSTOMER_KEY);
-  } catch {
-    return null; // storage unavailable (private mode etc.)
-  }
-}
-
 export default function ChatPage() {
-  // The bound conversation, or null until a customer is picked/restored. This is
-  // the ONLY place identity is established; sendMessage carries just this id.
+  // The bound conversation, or null until a customer is picked. This is the
+  // ONLY place identity is established; sendMessage carries just this id + text.
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
   const [showPolicy, setShowPolicy] = useState(false);
-  const restored = useRef(false);
-
-  // Resume (or create) the customer's most-recent conversation — used both when
-  // a customer is picked and when restoring the last selection on mount, so the
-  // thread and its history survive navigating to Admin and back.
-  const open = trpc.conversation.open.useMutation({
-    onSuccess: ({ conversationId: id }, variables) => {
-      setActiveCustomerId(variables.customerId);
-      setConversationId(id);
-      try {
-        localStorage.setItem(ACTIVE_CUSTOMER_KEY, variables.customerId);
-      } catch {
-        // ignore storage failures — selection still works for this session
-      }
-    },
-  });
-
-  // Restore the last-used customer once on mount (the fix for "history gone
-  // after visiting Admin"): silently reopen their conversation. If the stored
-  // customer no longer exists (e.g. DB reseeded), forget it without a banner.
-  useEffect(() => {
-    if (restored.current) return;
-    restored.current = true;
-    const saved = readSavedCustomer();
-    if (saved === null) return;
-    open.mutate(
-      { customerId: saved },
-      {
-        onError: () => {
-          try {
-            localStorage.removeItem(ACTIVE_CUSTOMER_KEY);
-          } catch {
-            // ignore
-          }
-          open.reset(); // restore was automatic — never surface its error
-        },
-      },
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const pendingCustomerId = open.isPending
-    ? (open.variables?.customerId ?? null)
-    : null;
 
   return (
     <div className="space-y-6">
@@ -120,10 +64,10 @@ export default function ChatPage() {
 
       <CustomerPicker
         activeCustomerId={activeCustomerId}
-        pendingCustomerId={pendingCustomerId}
-        disabled={open.isPending}
-        errorMessage={open.isError ? open.error.message : null}
-        onPick={(customerId) => open.mutate({ customerId })}
+        onPick={(customerId, newConversationId) => {
+          setActiveCustomerId(customerId);
+          setConversationId(newConversationId);
+        }}
       />
 
       {conversationId === null ? (
@@ -147,30 +91,32 @@ export default function ChatPage() {
 
 function CustomerPicker({
   activeCustomerId,
-  pendingCustomerId,
-  disabled,
-  errorMessage,
   onPick,
 }: {
   activeCustomerId: string | null;
-  pendingCustomerId: string | null;
-  disabled: boolean;
-  errorMessage: string | null;
-  onPick: (customerId: string) => void;
+  onPick: (customerId: string, conversationId: string) => void;
 }) {
   const customers = trpc.customers.list.useQuery();
+  // conversation.create binds identity. We keep the just-picked id so the
+  // button can show a pending state on exactly the row being opened.
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const createConversation = trpc.conversation.create.useMutation({
+    onSuccess: ({ conversationId }, variables) => {
+      onPick(variables.customerId, conversationId);
+      setPendingId(null);
+    },
+    onError: () => setPendingId(null),
+  });
 
   if (customers.isError) {
     return (
-      <ApiUnreachable
-        detail={customers.error.message}
-        subject="customers"
-        onRetry={() => void customers.refetch()}
-      />
+      <ApiUnreachable detail={customers.error.message} subject="customers" />
     );
   }
   if (!customers.data) {
-    return <p className="text-sm text-slate-500">Loading customers…</p>;
+    return (
+      <p className="text-sm text-slate-500">Loading customers…</p>
+    );
   }
 
   return (
@@ -178,13 +124,16 @@ function CustomerPicker({
       <div className="flex flex-wrap gap-2">
         {customers.data.map((customer) => {
           const isActive = customer.id === activeCustomerId;
-          const isPending = pendingCustomerId === customer.id;
+          const isPending = pendingId === customer.id;
           return (
             <button
               key={customer.id}
               type="button"
-              disabled={disabled}
-              onClick={() => onPick(customer.id)}
+              disabled={createConversation.isPending}
+              onClick={() => {
+                setPendingId(customer.id);
+                createConversation.mutate({ customerId: customer.id });
+              }}
               className={`rounded-full border px-3 py-1.5 text-sm transition disabled:opacity-60 ${
                 isActive
                   ? "border-slate-900 bg-slate-900 text-white"
@@ -197,9 +146,9 @@ function CustomerPicker({
           );
         })}
       </div>
-      {errorMessage && (
+      {createConversation.isError && (
         <p className="text-sm text-red-600">
-          Could not open the conversation: {errorMessage}
+          Could not start a conversation: {createConversation.error.message}
         </p>
       )}
     </div>
@@ -279,13 +228,7 @@ function Conversation({ conversationId }: { conversationId: string }) {
   };
 
   if (messages.isError) {
-    return (
-      <ApiUnreachable
-        detail={messages.error.message}
-        subject="messages"
-        onRetry={() => void messages.refetch()}
-      />
-    );
+    return <ApiUnreachable detail={messages.error.message} subject="messages" />;
   }
 
   const thread = messages.data ?? [];
@@ -585,13 +528,7 @@ function OrdersSidebar({ conversationId }: { conversationId: string }) {
   const orders = trpc.conversation.orders.useQuery({ conversationId });
 
   if (orders.isError) {
-    return (
-      <ApiUnreachable
-        detail={orders.error.message}
-        subject="orders"
-        onRetry={() => void orders.refetch()}
-      />
-    );
+    return <ApiUnreachable detail={orders.error.message} subject="orders" />;
   }
 
   return (
@@ -728,11 +665,7 @@ function PolicyModal({ onClose }: { onClose: () => void }) {
         </div>
         <div className="overflow-y-auto px-5 py-4">
           {policy.isError ? (
-            <ApiUnreachable
-              detail={policy.error.message}
-              subject="policy"
-              onRetry={() => void policy.refetch()}
-            />
+            <ApiUnreachable detail={policy.error.message} subject="policy" />
           ) : !policy.data ? (
             <p className="text-sm text-slate-500">Loading policy…</p>
           ) : (
@@ -785,31 +718,14 @@ function MissingKeyBanner({
 function ApiUnreachable({
   detail,
   subject,
-  onRetry,
 }: {
   detail: string;
   subject: string;
-  // When provided, render a "Try again" button so a TRANSIENT failure (e.g. the
-  // API momentarily restarting) is recoverable in one click instead of a full
-  // page reload — otherwise the error is a dead end (this stranded the customer
-  // picker after a brief backend blip).
-  onRetry?: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-      <p>
-        Could not load {subject} — is the server running? ({detail})
-      </p>
-      {onRetry && (
-        <button
-          type="button"
-          onClick={onRetry}
-          className="mt-2 rounded-md border border-red-300 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100"
-        >
-          Try again
-        </button>
-      )}
-    </div>
+    <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      Could not load {subject} — is the server running? ({detail})
+    </p>
   );
 }
 
