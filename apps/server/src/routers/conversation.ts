@@ -8,7 +8,7 @@ import {
 } from "@loopp/db";
 import { newId } from "@loopp/shared";
 import { TRPCError } from "@trpc/server";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { publicProcedure, router } from "../trpc";
 
@@ -27,6 +27,65 @@ export const conversationRouter = router({
           code: "NOT_FOUND",
           message: `Customer "${input.customerId}" not found`,
         });
+      }
+
+      const conversationId = newId("conv");
+      await ctx.db.insert(conversations).values({
+        id: conversationId,
+        customerId: input.customerId,
+        createdAt: new Date(),
+      });
+      return { conversationId };
+    }),
+
+  /**
+   * Open the customer's chat: RESUME their most-recently-active conversation,
+   * creating one only if they have none. "Active" = the conversation whose
+   * newest message is newest (so the chat reopens the thread the customer was
+   * actually using); all-empty / ties fall back to the newest conversation.
+   *
+   * This is what the chat uses when a customer is picked (or restored on return
+   * from another tab), so history persists across navigation instead of a fresh
+   * empty thread each time — and conversations stop multiplying on every click.
+   * `create` is kept for an explicit brand-new conversation.
+   */
+  open: publicProcedure
+    .input(z.object({ customerId: z.string().min(1).max(64) }).strict())
+    .mutation(async ({ ctx, input }) => {
+      const found = await ctx.db
+        .select({ id: customers.id })
+        .from(customers)
+        .where(eq(customers.id, input.customerId))
+        .limit(1);
+      if (found.length === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Customer "${input.customerId}" not found`,
+        });
+      }
+
+      // Each existing conversation with its latest message time (NULL = empty).
+      const existing = await ctx.db
+        .select({
+          id: conversations.id,
+          createdAt: conversations.createdAt,
+          lastMessageAt: sql<string | null>`max(${messages.createdAt})`,
+        })
+        .from(conversations)
+        .leftJoin(messages, eq(messages.conversationId, conversations.id))
+        .where(eq(conversations.customerId, input.customerId))
+        .groupBy(conversations.id, conversations.createdAt);
+
+      if (existing.length > 0) {
+        const ms = (v: string | Date | null): number =>
+          v === null ? 0 : new Date(v).getTime();
+        // Most recent message first; ties / all-empty fall back to newest row.
+        existing.sort(
+          (a, b) =>
+            ms(b.lastMessageAt) - ms(a.lastMessageAt) ||
+            ms(b.createdAt) - ms(a.createdAt),
+        );
+        return { conversationId: existing[0]!.id };
       }
 
       const conversationId = newId("conv");

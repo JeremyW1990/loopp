@@ -307,6 +307,82 @@ describe("conversation router", () => {
   });
 });
 
+// --- conversation.open (resume-or-create; chat-history persistence) ---------------
+//
+// The chat opens a customer via conversation.open, which RESUMES their most
+// recently active thread instead of creating a fresh empty one each pick — so
+// history survives navigating away and back. Uses cus_014/cus_015 (no other test
+// in this file touches them) and cleans up its own rows (seed runs once, no reset).
+
+describe("conversation.open", () => {
+  it("creates a conversation when the customer has none, then resumes the SAME one (no duplicate)", async () => {
+    const { caller } = buildCaller();
+    const ids: string[] = [];
+    try {
+      const a = await caller.conversation.open({ customerId: "cus_014" });
+      const b = await caller.conversation.open({ customerId: "cus_014" });
+      ids.push(a.conversationId, b.conversationId);
+      expect(b.conversationId).toBe(a.conversationId); // resumed, not a new row
+      const rows = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.customerId, "cus_014"));
+      expect(rows).toHaveLength(1);
+    } finally {
+      for (const id of new Set(ids)) {
+        await db.delete(conversations).where(eq(conversations.id, id));
+      }
+    }
+  });
+
+  it("resumes the conversation with the NEWEST message, not just the newest conversation row", async () => {
+    const { caller } = buildCaller();
+    try {
+      // Older-created conversation that holds a RECENT message…
+      await db.insert(conversations).values({
+        id: "conv_open_active",
+        customerId: "cus_015",
+        createdAt: new Date("2026-01-01T00:00:00Z"),
+      });
+      // …vs. a newer-created but EMPTY conversation.
+      await db.insert(conversations).values({
+        id: "conv_open_empty",
+        customerId: "cus_015",
+        createdAt: new Date("2026-02-01T00:00:00Z"),
+      });
+      await db.insert(messages).values({
+        id: "msg_open_active",
+        conversationId: "conv_open_active",
+        role: "user",
+        content: "still here",
+        runId: null,
+        createdAt: new Date("2026-03-01T00:00:00Z"),
+      });
+
+      const res = await caller.conversation.open({ customerId: "cus_015" });
+      expect(res.conversationId).toBe("conv_open_active");
+    } finally {
+      await db
+        .delete(messages)
+        .where(eq(messages.conversationId, "conv_open_active"));
+      await db
+        .delete(conversations)
+        .where(eq(conversations.id, "conv_open_active"));
+      await db
+        .delete(conversations)
+        .where(eq(conversations.id, "conv_open_empty"));
+    }
+  });
+
+  it("throws NOT_FOUND for an unknown customer", async () => {
+    const { caller } = buildCaller();
+    const error = await rejectionOf(
+      caller.conversation.open({ customerId: "cus_999" }),
+    );
+    expect(error.code).toBe("NOT_FOUND");
+  });
+});
+
 // --- conversation.orders (sidebar source; session-scoped identity) ---------------
 //
 // The chat sidebar reads orders through this query. The decisive invariant is
